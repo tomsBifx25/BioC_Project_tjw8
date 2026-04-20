@@ -1,0 +1,755 @@
+---
+title: "RNA-seq analysis with Bioconductor"
+author: "Previous student report based on the rnaseqGene Bioconductor workflow"
+bibliography: references.bib
+format:
+  gfm:
+    output-file: README.md
+    execute:
+      echo: false
+      eval: true
+  revealjs:
+    slide-level: 4
+    execute:
+      echo: false
+      eval: true
+---
+
+## Professor's note
+
+> This branch isn't perfect, but it will give you an idea of what I'm looking for in your final project. It represents the work of some previous students. The analysis script, in particular, is a little on the long side and is short on documentation toward the end of the document (including references).
+
+```{r}
+#| include: false
+
+# make sure all required packages are available and load without extra output later on
+library(airway)
+library(knitr)
+```
+
+## Introduction: CRISPLD2
+
+Airway dataset summarizes an RNA-seq experiment where airway smooth muscle cells were treated with dexamethasone, a synthetic glucocorticoid steroid with anti-inflammatory effects [@himes_rna-seq_2014].
+
+## Step 1: Experimental Data
+
+### The dataset for this analysis was from the "airway" package.
+
+To access this dataset we need to first install the BiocManager package:
+
+`if (!require("BiocManager", quietly = TRUE))     install.packages("BiocManager")`
+
+Then we can install the airway package:
+
+`BiocManager::install("airway")`.
+
+### Data: Experimental Data
+
+Here is a list of the files in the airway package:
+
+```{r}
+## ----loadairway---------------------------------------------------------------
+library(airway)
+data(airway)
+
+
+## ----dir----------------------------------------------------------------------
+dir <- system.file("extdata", package="airway", mustWork=TRUE)
+
+## ----list.files---------------------------------------------------------------
+list.files(dir)
+```
+
+:::{.content-visible when-format="revealjs"}
+### Data: Experimental Data
+:::
+
+Under the "quants" directory we have these files:
+
+```{r}
+list.files(file.path(dir, "quants"))
+```
+
+:::{.content-visible when-format="revealjs"}
+### Data: Experimental Data
+:::
+
+We can open the sample_table.csv and find the following data:
+
+```{r warning = FALSE}
+## ----sampleinfo---------------------------------------------------------------
+csvfile <- file.path(dir, "sample_table.csv")
+coldata <- read.csv(csvfile, row.names=1, stringsAsFactors=FALSE)
+head(coldata) |>
+    kable()
+```
+
+### Data
+
+From here, the example in the vignette uses these parts of the sample_text.csv:
+
+```{r}
+coldata <- coldata[1:2,]
+coldata$names <- coldata$Run
+coldata |>
+    kable()
+```
+
+:::{.content-visible when-format="revealjs"}
+### Data
+:::
+
+And calls the sample name from the "quants" directory:
+
+```{r}
+#| echo: true
+coldata$files <- file.path(dir, "quants", coldata$names, "quant.sf.gz")
+file.exists(coldata$files)
+```
+
+### Experimental Data
+
+```{r fig.align='center', echo=FALSE}
+
+par(mar=c(0,0,0,0))
+plot(1,1,xlim=c(0,100),ylim=c(0,100),bty="n",
+     type="n",xlab="",ylab="",xaxt="n",yaxt="n")
+polygon(c(45,90,90,45),c(5,5,70,70),col="pink",border=NA)
+polygon(c(45,90,90,45),c(68,68,70,70),col="pink3",border=NA)
+text(67.5,40,"assay(s)")
+text(67.5,35,'e.g. "counts", ...')
+polygon(c(10,40,40,10),c(5,5,70,70),col="skyblue",border=NA)
+polygon(c(10,40,40,10),c(68,68,70,70),col="skyblue3",border=NA)
+text(25,40,"rowRanges")
+polygon(c(45,90,90,45),c(75,75,95,95),col="palegreen",border=NA)
+polygon(c(45,47,47,45),c(75,75,95,95),col="palegreen3",border=NA)
+text(67.5,85,"colData")
+```
+
+## Overview of Analysis Method
+
+-   Alignment of reads to a reference transcriptome
+
+-   Generation of a count matrix and SummarizedExerpiment
+
+-   Differential expression analysis using statistical modeling (using DESeq2)
+
+## STEP 2. Preparing quantification input to DESeq2
+
+In order to run the count-based statistical methods such as : DESeq2, edgeR, limma, EBseq, baySeq. You would need to take the high-throughput sequences matrix's into un-normalized counts.
+
+<!-- Professor's note: these image files don't have helpful names, and I'm pretty sure there are figures we aren't using -->
+
+![](images/clipboard-3954363998.png){width="351"}
+
+:::{.content-visible when-format="revealjs"}
+## STEP 2. Preparing quantification input to DESeq2
+:::
+
+![](images/clipboard-3998433593.png)
+
+![](images/clipboard-4109524382.png)
+
+For the purpose of preparing the sequence for DESeq2, the data needs to be count matrix. The matrix contains raw counts of sequencing reads mapped to each gene for each sample.
+
+### WORKFLOW : COUNT MATRIX - TRASNCRIPT QUANTIFICATION (SALMON ) - TXIMPORT SUMMARY GENE-LEVEL
+
+Align the reads to the genome and begin to count the reads that are consistent with the gene models. This is done by obtaining the transcript quantification.
+
+Processes with transcript quantification methods such as (without aligning reads)
+
+-   Salmon
+
+-   Kallisto
+
+-   RSEM
+
+### QUANTIFYING SALMON
+
+Salmon is a A transcript quantification method that is fast, accurate and bias-aware in quantification from RNA-seq data.
+
+-   Indexing the transcriptome
+
+-   Obtaining the Reads
+
+-   Quantifying the Samples
+
+#### QUANTIFYING SALMON: INDEXING THE TRASNCRIPTOME
+
+The index helps create a signature for each transcript in our reference transcriptome. The Salmon index has two components:
+
+-   A suffix array (SA) of the reference transcriptome
+
+-   A hash table to map each transcript in the reference transcriptome to it's location in the SA (is not required, but improves the speed of mapping drastically)
+
+:::{.content-visible when-format="revealjs"}
+#### QUANTIFYING SALMON: INDEXING THE TRASNCRIPTOME
+:::
+
+![](images/clipboard-1098730035.png){width="479"}
+
+#### QUANTIFYING SALMON: OBTAINING THE READS
+
+![](images/clipboard-1156146813.png){width="601"}
+
+#### QUANTIFYING SALMON: ABUNDANCE QUANTIFICATION
+
+After determining the read/fragment using the quasi mapping methods, salmon will generate the final transcript abundance estimates .
+
+-   Length of the transcript
+
+-   Effective length
+
+-   TPM(transcripts per million) normalization method
+
+-   Number of reads, estimate of number of reads drawn from this transcript given the transcripts relative abundance and length.
+
+### READING DATA WITH TXIMETA
+
+[HOW DOES TXIMPORT WORK:]{.underline}
+
+It takes import transcript level estimates to summarize abundances, counts, and transcript lengths to the gene-level or outputs transcript level matrices.
+
+The advantages of using the transcript abundance quantifiers in conjunction with *tximport* to produce gene-level count matrices and normalizing offsets are: this approach corrects for any potential changes in gene length across samples
+
+:::{.content-visible when-format="revealjs"}
+### READING DATA WITH TXIMETA
+:::
+
+![](images/clipboard-2314373886.png)
+
+-   *DESEQ2 import functions*
+
+### SUMMARIZED EXPERIMENT
+
+![](images/clipboard-3230841342.png)
+
+## STEP 3: DESeq2
+
+What is it?
+
+What dose DESeqDataSet object do?
+
+### METHOD OVERVIEW OF WORKFLOW
+
+![](rnaseqGene_workflow.png){fig-align="center"}
+
+### METHOD HIGHLIGHT
+
+These tools and methods are optimized for reproducibility, statistical rigor, and comprehensive visualization in RNA-Seq workflows. They align well with Bioconductor standards for analysis and open science. Preventing biases, in order to ensure that.
+
+<!-- Professor's note: rather than dropping this large code chunk here, it would be better to run (or source) the analysis at the beginning of the document in the setup chunk. Sourcing would be beneificial because you could use the same code here as you do in the analysis script. -->
+
+```{r}
+#| include: false
+## ----tximeta, message=TRUE----------------------------------------------------
+library("tximeta")
+se <- tximeta(coldata)
+
+## ----lookse-------------------------------------------------------------------
+dim(se)
+head(rownames(se))
+
+## ----summarize, message=TRUE--------------------------------------------------
+gse <- summarizeToGene(se)
+
+## ----lookgse------------------------------------------------------------------
+dim(gse)
+head(rownames(gse))
+
+## ----loadfullgse--------------------------------------------------------------
+data(gse)
+gse
+
+## ----assaysgse----------------------------------------------------------------
+assayNames(gse)
+head(assay(gse), 3)
+colSums(assay(gse))
+
+## ----rowrangesgse-------------------------------------------------------------
+rowRanges(gse)
+
+## ----lookseqinfo--------------------------------------------------------------
+seqinfo(rowRanges(gse))
+
+## ----coldatagse---------------------------------------------------------------
+colData(gse)
+
+## ----gsevars------------------------------------------------------------------
+gse$donor
+gse$condition
+
+## ----gsevarsrename------------------------------------------------------------
+gse$cell <- gse$donor
+gse$dex <- gse$condition
+
+## ----renamelevels-------------------------------------------------------------
+levels(gse$dex)
+# when renaming levels, the order must be preserved!
+levels(gse$dex) <- c("untrt", "trt")
+
+## ----gsedex-------------------------------------------------------------------
+library("magrittr")
+gse$dex %<>% relevel("untrt")
+gse$dex
+
+## ----explaincmpass, eval = FALSE----------------------------------------------
+#  gse$dex <- relevel(gse$dex, "untrt")
+
+## ----countreads---------------------------------------------------------------
+round( colSums(assay(gse)) / 1e6, 1 )
+
+## ----loaddeseq2---------------------------------------------------------------
+library("DESeq2")
+
+## ----makedds------------------------------------------------------------------
+dds <- DESeqDataSet(gse, design = ~ cell + dex)
+
+## -----------------------------------------------------------------------------
+countdata <- round(assays(gse)[["counts"]])
+head(countdata, 3)
+
+## -----------------------------------------------------------------------------
+coldata <- colData(gse)
+
+## -----------------------------------------------------------------------------
+ddsMat <- DESeqDataSetFromMatrix(countData = countdata,
+                                 colData = coldata,
+                                 design = ~ cell + dex)
+
+## -----------------------------------------------------------------------------
+nrow(dds)
+smallestGroupSize <- 4
+keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
+dds <- dds[keep,]
+nrow(dds)
+
+## ----meanSdCts----------------------------------------------------------------
+lambda <- 10^seq(from = -1, to = 2, length = 1000)
+cts <- matrix(rpois(1000*100, lambda), ncol = 100)
+library("vsn")
+meanSdPlot(cts, ranks = FALSE)
+
+## ----vst----------------------------------------------------------------------
+vsd <- vst(dds, blind = FALSE)
+head(assay(vsd), 3)
+colData(vsd)
+
+## ----rlog---------------------------------------------------------------------
+rld <- rlog(dds, blind = FALSE)
+head(assay(rld), 3)
+
+## ----transformplot, fig.width = 6, fig.height = 2.5---------------------------
+library("dplyr")
+library("ggplot2")
+
+dds <- estimateSizeFactors(dds)
+
+df <- bind_rows(
+  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+lvls <- c("log2(x + 1)", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+
+## -----------------------------------------------------------------------------
+sampleDists <- dist(t(assay(vsd)))
+sampleDists
+
+## -----------------------------------------------------------------------------
+library("pheatmap")
+library("RColorBrewer")
+
+## ----distheatmap, fig.width = 6.1, fig.height = 4.5---------------------------
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$dex, vsd$cell, sep = " - " )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+## -----------------------------------------------------------------------------
+library("PoiClaClu")
+poisd <- PoissonDistance(t(counts(dds)))
+
+## ----poisdistheatmap, fig.width = 6.1, fig.height = 4.5-----------------------
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+rownames(samplePoisDistMatrix) <- paste( dds$dex, dds$cell, sep=" - " )
+colnames(samplePoisDistMatrix) <- NULL
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = poisd$dd,
+         clustering_distance_cols = poisd$dd,
+         col = colors)
+
+## ----plotpca, fig.width=6, fig.height=4.5-------------------------------------
+plotPCA(vsd, intgroup = c("dex", "cell"))
+
+## -----------------------------------------------------------------------------
+pcaData <- plotPCA(vsd, intgroup = c( "dex", "cell"), returnData = TRUE)
+pcaData
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+## -----------------------------------------------------------------------------
+library("glmpca")
+gpca <- glmpca(counts(dds), L=2)
+gpca.dat <- gpca$factors
+gpca.dat$dex <- dds$dex
+gpca.dat$cell <- dds$cell
+
+
+##
+
+## ----airwayDE-----------------------------------------------------------------
+dds <- DESeq(dds)
+
+## -----------------------------------------------------------------------------
+res <- results(dds)
+res
+
+## -----------------------------------------------------------------------------
+res <- results(dds, contrast=c("dex","trt","untrt"))
+
+## -----------------------------------------------------------------------------
+mcols(res, use.names = TRUE)
+
+## -----------------------------------------------------------------------------
+summary(res)
+
+## -----------------------------------------------------------------------------
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+
+## -----------------------------------------------------------------------------
+resLFC1 <- results(dds, lfcThreshold=1)
+table(resLFC1$padj < 0.1)
+
+## -----------------------------------------------------------------------------
+results(dds, contrast = c("cell", "N061011", "N61311"))
+
+## ----sumres-------------------------------------------------------------------
+sum(res$pvalue < 0.05, na.rm=TRUE)
+sum(!is.na(res$pvalue))
+
+## -----------------------------------------------------------------------------
+sum(res$padj < 0.1, na.rm=TRUE)
+
+## -----------------------------------------------------------------------------
+resSig <- subset(res, padj < 0.1)
+head(resSig[ order(resSig$log2FoldChange), ])
+
+## -----------------------------------------------------------------------------
+head(resSig[ order(resSig$log2FoldChange, decreasing = TRUE), ])
+
+## ----plotcounts---------------------------------------------------------------
+topGene <- rownames(res)[which.min(res$padj)]
+plotCounts(dds, gene = topGene, intgroup=c("dex"))
+
+## ----ggplotcountsjitter, fig.width = 4, fig.height = 3------------------------
+library("ggbeeswarm")
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("dex","cell"),
+                         returnData = TRUE)
+
+## ----plotma-------------------------------------------------------------------
+library("apeglm")
+resultsNames(dds)
+res <- lfcShrink(dds, coef="dex_trt_vs_untrt", type="apeglm")
+plotMA(res, ylim = c(-5, 5))
+
+
+
+## ----histpvalue2--------------------------------------------------------------
+hist(res$pvalue[res$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white")
+
+## -----------------------------------------------------------------------------
+library("genefilter")
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20)
+
+## ----genescluster-------------------------------------------------------------
+mat  <- assay(vsd)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("cell","dex")])
+pheatmap(mat, annotation_col = anno)
+
+## ----sensitivityovermean, fig.width=6-----------------------------------------
+qs <- c(0, quantile(resLFC1$baseMean[resLFC1$baseMean > 0], 0:6/6))
+bins <- cut(resLFC1$baseMean, qs)
+levels(bins) <- paste0("~", round(signif((qs[-1] + qs[-length(qs)])/2, 2)))
+fractionSig <- tapply(resLFC1$pvalue, bins, function(p)
+                          mean(p < .05, na.rm = TRUE))
+barplot(fractionSig, xlab = "mean normalized count",
+                     ylab = "fraction of small p values")
+
+## ----eval=FALSE---------------------------------------------------------------
+#  library("IHW")
+#  res.ihw <- results(dds, filterFun=ihw)
+
+## -----------------------------------------------------------------------------
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+## -----------------------------------------------------------------------------
+columns(org.Hs.eg.db)
+
+## -----------------------------------------------------------------------------
+ens.str <- substr(rownames(res), 1, 15)
+res$symbol <- mapIds(org.Hs.eg.db,
+                     keys=ens.str,
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res$entrez <- mapIds(org.Hs.eg.db,
+                     keys=ens.str,
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+## -----------------------------------------------------------------------------
+resOrdered <- res[order(res$pvalue),]
+head(resOrdered)
+
+## ----eval=FALSE---------------------------------------------------------------
+#  resOrderedDF <- as.data.frame(resOrdered)[1:100, ]
+#  write.csv(resOrderedDF, file = "results.csv")
+
+## -----------------------------------------------------------------------------
+resGR <- lfcShrink(dds, coef="dex_trt_vs_untrt", type="apeglm", format="GRanges")
+resGR
+
+## -----------------------------------------------------------------------------
+ens.str <- substr(names(resGR), 1, 15)
+resGR$symbol <- mapIds(org.Hs.eg.db, ens.str, "SYMBOL", "ENSEMBL")
+
+## -----------------------------------------------------------------------------
+library("Gviz")
+
+## -----------------------------------------------------------------------------
+window <- resGR[topGene] + 1e6
+strand(window) <- "*"
+resGRsub <- resGR[resGR %over% window]
+naOrDup <- is.na(resGRsub$symbol) | duplicated(resGRsub$symbol)
+resGRsub$group <- ifelse(naOrDup, names(resGRsub), resGRsub$symbol)
+
+## -----------------------------------------------------------------------------
+status <- factor(ifelse(resGRsub$padj < 0.05 & !is.na(resGRsub$padj),
+                        "sig", "notsig"))
+
+## ----gvizplot-----------------------------------------------------------------
+options(ucscChromosomeNames = FALSE)
+g <- GenomeAxisTrack()
+a <- AnnotationTrack(resGRsub, name = "gene ranges", feature = status)
+d <- DataTrack(resGRsub, data = "log2FoldChange", baseline = 0,
+               type = "h", name = "log2 fold change", strand = "+")
+plotTracks(list(g, d, a), groupAnnotation = "group",
+           notsig = "grey", sig = "hotpink")
+
+## -----------------------------------------------------------------------------
+library("sva")
+
+## -----------------------------------------------------------------------------
+dat  <- counts(dds, normalized = TRUE)
+idx  <- rowMeans(dat) > 1
+dat  <- dat[idx, ]
+mod  <- model.matrix(~ dex, colData(dds))
+mod0 <- model.matrix(~   1, colData(dds))
+svseq <- svaseq(dat, mod, mod0, n.sv = 2)
+svseq$sv
+
+
+
+## -----------------------------------------------------------------------------
+ddssva <- dds
+ddssva$SV1 <- svseq$sv[,1]
+ddssva$SV2 <- svseq$sv[,2]
+design(ddssva) <- ~ SV1 + SV2 + dex
+
+## -----------------------------------------------------------------------------
+library("RUVSeq")
+
+## -----------------------------------------------------------------------------
+set <- newSeqExpressionSet(counts(dds))
+idx  <- rowSums(counts(set) > 5) >= 2
+set  <- set[idx, ]
+set <- betweenLaneNormalization(set, which="upper")
+not.sig <- rownames(res)[which(res$pvalue > .1)]
+empirical <- rownames(set)[ rownames(set) %in% not.sig ]
+set <- RUVg(set, empirical, k=2)
+pData(set)
+
+
+## -----------------------------------------------------------------------------
+ddsruv <- dds
+ddsruv$W1 <- set$W_1
+ddsruv$W2 <- set$W_2
+design(ddsruv) <- ~ W1 + W2 + dex
+
+## -----------------------------------------------------------------------------
+library("fission")
+data("fission")
+ddsTC <- DESeqDataSet(fission, ~ strain + minute + strain:minute)
+
+## ----fissionDE----------------------------------------------------------------
+ddsTC <- DESeq(ddsTC, test="LRT", reduced = ~ strain + minute)
+resTC <- results(ddsTC)
+resTC$symbol <- mcols(ddsTC)$symbol
+head(resTC[order(resTC$padj),], 4)
+
+## ----fissioncounts, fig.width=6, fig.height=4.5-------------------------------
+fiss <- plotCounts(ddsTC, which.min(resTC$padj), 
+                   intgroup = c("minute","strain"), returnData = TRUE)
+fiss$minute <- as.numeric(as.character(fiss$minute))
+ggplot(fiss,
+  aes(x = minute, y = count, color = strain, group = strain)) + 
+  geom_point() + stat_summary(fun.y=mean, geom="line") +
+  scale_y_log10()
+
+## -----------------------------------------------------------------------------
+resultsNames(ddsTC)
+res30 <- results(ddsTC, name="strainmut.minute30", test="Wald")
+res30[which.min(res30$padj),]
+
+## -----------------------------------------------------------------------------
+betas <- coef(ddsTC)
+colnames(betas)
+
+```
+
+## STEP 4: Exploratory Analysis and Visualization: 
+
+### Scatterplot of transformed counts from two samples
+
+It compares three transformations (log2, vst, and rlog) and shows the differences in density and spread of counts after applying transformation.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Plot 1
+#Compares three transformations (log2, vst, and rlog) side by side.
+#It shows the differences in density and spread of counts after applying each transformation.
+#It helps us determine which method best stabilizes variance for RNA-Seq data. Both vst and rlog are typically preferred.
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+```
+
+### Heatmap of sample-to-sample distances using the variance stabilizing transformed values.
+
+The plot compares untreated and treated groups across four conditions, indicating condition-specific and possibly variable treatment effects.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#plot 2
+#It shows clusters of samples based on experimental conditions like treatment or replicates.
+#Tight clusters for replicates indicate high data quality and reproducibility.
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+
+### PCA plot using the VSD data
+
+The PCA plot shows clusters of samples grouped by experimental conditions across four conditions. PC1 and PC2 explain 52% and 22% of the variance, respectively.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#plot 3
+#Highlights clustering of samples based on dex (treatment) and cell.
+#Major sources of variability are driven by experimental design. Tight clusters reflect reproducibility.
+plotPCA(vsd, intgroup = c("dex", "cell"))
+```
+
+### Normalized counts for a single gene over treatment group
+
+It confirms the significance of a top differentially expressed gene.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#plot 4
+#Shows normalized counts of a top differentially expressed gene across groups. (or Shows differential expression between treatment groups).
+#It confirms the significance of a top differentially expressed gene.
+plotCounts(dds, gene = topGene, intgroup=c("dex"))
+```
+
+### Heatmap of relative VST-transformed values across samples
+
+It shows clusters of genes with similar expression patterns across conditions and highlights key genes driving variability in the dataset.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#plot 6
+#It shows clusters of genes with similar expression patterns across conditions and highlights key genes driving variability in the dataset.
+pheatmap(mat, annotation_col = anno)
+```
+
+### Normalized counts for a gene with condition-specific changes over time
+
+It shows differences in expression dynamics over time.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#plot 7
+#It shows differences in expression dynamics over time.
+#It highlights temporal responses in RNA-Seq experiments.
+ggplot(fiss,
+  aes(x = minute, y = count, color = strain, group = strain)) + 
+  geom_point() + stat_summary(fun.y=mean, geom="line") +
+  scale_y_log10()
+```
+
+## STEP 5: Differential Expression Analysis
+
+Differential expression analysis aims to identify genes that exhibit significant changes in expression levels between two or more conditions.
+
+-   Non-Treatment Group (gene expression on cells for)
+
+-   Treatment Group (gene expression on cells for)
+
+:::{.content-visible when-format="revealjs"}
+## STEP 5: Differential Expression Analysis
+:::
+
+The workflow of requires DESeqDATAset to run raw counts of genes in DESeq, returning:
+
+-   estimate of size factor
+
+-   estimate of dispersion values for each gene
+
+-   fitting generalized linear model  
+
+:::{.content-visible when-format="revealjs"}
+## STEP 5: Differential Expression Analysis
+:::
+
+![](images/clipboard-2089089640.png)
+
+:::{.content-visible when-format="revealjs"}
+## STEP 5: Differential Expression Analysis
+:::
+
+![](images/clipboard-4037071693.png)
+
+### OVERVIEW DIFFERENTIAL GENE EXPRESSION
+
+![](images/clipboard-3712704949.png)
+
+## Conclusion
+
+### What interesting things / skills did you learn?
+
+-   The detail and order it took to organize and produce count reads to prevent blanks, biases, and only targeted genes to be analyzed. There are several steps that are vital to output a SummarizedExperiment.
+
+-   Using Salmon align reads to a reference transcriptome instead of a genome
+
+-   There is difference between transcriptome level reads and genome level reads to analyze the gene counts.
+
+### What interesting things did you learn from the data?
+
+-   PCA plots showed visibility the difference between the treatment and non treatment groups. Expected both groups to cluster together.
+
+-   Greatest variance is being driven by the treatment group.
+
+### What challenges did you come across?
+
+-   Authors reused variable names causing confusion in identifying data frames to troubleshoot errors and produce graphs.
+
+-   Branch Management within Source-Tree and Github.
+
+-   Plot errors; numeric and NA values were not aligned.
