@@ -13,12 +13,13 @@ format:
       eval: true
 ---
 
-## Dependencies
-Notes:
-
+## UPDATE notes:
 * label codechunks within the `{r}` curly braces, e.g., `{r PCA_plot}`
 
-```{r} 
+
+## Dependencies
+
+```{r Setup} 
 #| include: false
 
 # make sure all required packages are available and load without extra output later on
@@ -43,13 +44,126 @@ library(Gviz)
 library(sva)
 library(RUVSeq)
 library(fission)
+
+# my library edits
+## data loading, section DL01
+library(scRNAseq)
+library(scater)
+library(org.Mm.eg.db)
+
+## QC
+
+## Normalizations
+library(scran)
+
+
 ```
 
 ## Overview (example)
 
 This Quarto document reproduces, as an academic exercise, the Bioconductor workflow package [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) using the recommended alternative pipeline utilizing Salmon for transcript quantification [@love_rna-seq_2016]. The [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) workflow package uses the data in the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package to demonstrate an end-to-end workflow for an RNA sequencing experiment [@himes_rna-seq_2014].
 
+## my overview edit for comparison
+This Quarto document reproduces, as an academic exercise, the Bioconductor workflow package [simpleSingleCell](https://www.bioconductor.org/packages/release/workflows/html/simpleSingleCell.html) using an alternative pipeline utilizing a heterogeneous dataset from a study of cell types in the mouse brain [@zeisel_rna-seq_2015]. The [simpleSingleCell](https://www.bioconductor.org/packages/release/workflows/html/simpleSingleCell.html) workflow package uses the data in the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package to demonstrate an end-to-end workflow for an RNA sequencing experiment [@himes_rna-seq_2014].
+
+
 The recommended alternative pipeline demonstration will use Salmon for transcript quantification of the FASTQ reads. The quantification files produced by Salmon are loaded into the package [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html), which will provide genomic annotation and create the Bioconductor friendly data container SummarizedExperiment [@love_tximeta_2020]. The SummarizedExperiment data container are loaded into DESeq2 to create the data object DESeqDataSet, which is used for analysis.
+
+# UPDATE: my edits - base to alter
+## Intro
+### Base intro/ descript
+* see above/make updates to exisiting
+
+## Data Loading
+The Authors obtained a `SingleCellExperiment` object for this dataset using the relevant function from the `scRNAseq` package. The idiosyncrasies of the published dataset means that we need to do some extra work to merge together redundant rows corresponding to alternative genomic locations for the same gene.
+
+```{r DL01}
+# start load setup
+library(scRNAseq) # make sure to load up top
+sce.zeisel <- ZeiselBrainData()
+
+library(scater) # make sure to load up top
+sce.zeisel <- aggregateAcrossFeatures(sce.zeisel, 
+    id=sub("_loc[0-9]+$", "", rownames(sce.zeisel)))
+
+# We also fetch the Ensembl gene IDs, just in case we need them later.
+library(org.Mm.eg.db) # make sure to load up top
+rowData(sce.zeisel)$Ensembl <- mapIds(org.Mm.eg.db, 
+    keys=rownames(sce.zeisel), keytype="SYMBOL", column="ENSEMBL")
+```
+
+## Quality Control
+The original authors of the study have already removed low-quality cells prior to data publication. Nonetheless, we compute some quality control metrics to check whether the remaining cells are satisfactory.
+
+```{r QC01}
+# 
+unfiltered <- sce.zeisel
+
+# 
+stats <- perCellQCMetrics(sce.zeisel, subsets=list(
+    Mt=rowData(sce.zeisel)$featureType=="mito"))
+qc <- quickPerCellQC(stats, percent_subsets=c("altexps_ERCC_percent", 
+    "subsets_Mt_percent"))
+sce.zeisel <- sce.zeisel[,!qc$discard]
+
+# 
+colData(unfiltered) <- cbind(colData(unfiltered), stats)
+unfiltered$discard <- qc$discard
+
+gridExtra::grid.arrange(
+    plotColData(unfiltered, y="sum", colour_by="discard") +
+        scale_y_log10() + ggtitle("Total count"),
+    plotColData(unfiltered, y="detected", colour_by="discard") +
+        scale_y_log10() + ggtitle("Detected features"),
+    plotColData(unfiltered, y="altexps_ERCC_percent",
+        colour_by="discard") + ggtitle("ERCC percent"),
+    plotColData(unfiltered, y="subsets_Mt_percent",
+        colour_by="discard") + ggtitle("Mito percent"),
+    ncol=2
+)
+```
+
+Figure 2.1: Distribution of each QC metric across cells in the Zeisel brain dataset. Each point represents a cell and is colored according to whether that cell was discarded. 
+
+```{r QC02}
+gridExtra::grid.arrange(
+    plotColData(unfiltered, x="sum", y="subsets_Mt_percent",
+        colour_by="discard") + scale_x_log10(),
+    plotColData(unfiltered, x="altexps_ERCC_percent", y="subsets_Mt_percent",
+        colour_by="discard"),
+    ncol=2
+)
+```
+
+Figure 2.2: Percentage of mitochondrial reads in each cell in the Zeisel brain dataset, compared to the total count (left) or the percentage of spike-in reads (right). Each point represents a cell and is colored according to whether that cell was discarded.
+
+We also examine the number of cells removed for each reason.
+
+```{r QC03}
+# gives table
+colSums(as.matrix(qc))
+```
+
+
+## Normalization
+
+```{r N01}
+library(scran) # make sure to add to top
+set.seed(1000)
+clusters <- quickCluster(sce.zeisel)
+sce.zeisel <- computeSumFactors(sce.zeisel, cluster=clusters) 
+sce.zeisel <- logNormCounts(sce.zeisel)
+```
+
+
+## Variance Modeling
+
+## Dimentionality Reduction
+
+## Clustering
+
+## Intertrepation
+
 
 ### Experimental Data (example)
 
@@ -112,7 +226,7 @@ The [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rn
 
 The transcript quantification files produced by Salmon can be brought into the bioconductor environment using [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) to produce the SummarizedExperiment data object [@love_tximeta_2020]. To demonstrate with the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package [@himes_rna-seq_2014], the following code loads the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) library, identifies and assigns the variable "dir" to represent the local directories that contain the quant.sf Salmon files. The [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package only provides two quant.sf files for runs SRR1039508 and SRR1039509 for demonstrative purposes.
 
-```{r}
+```{r Load}
 ## loadairway
 library("airway")
 
@@ -126,7 +240,7 @@ list.files(file.path(dir, "quants"))
 
 [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) requires a CSV or TSV sample table. The [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package provides an example of a sample table containing important sample identifying information, such as Sample Name, treatment/condition, sequencing run, and other conditions and identifying information for each sample.
 
-```{r}
+```{r Import}
 ## sampleinfo
 csvfile <- file.path(dir, "sample_table.csv")
 coldata <- read.csv(csvfile, row.names=1, stringsAsFactors=FALSE)
@@ -137,7 +251,7 @@ However, [tximeta](https://www.bioconductor.org/packages/release/bioc/html/txime
 
 The sample table provided by [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) does not contain these two required columns ("names" and "files"). We create these required columns with the following code:
 
-```{r}
+```{r Clean 01}
 ##makecoldata
 #this code for vignette loading salmon quant on select samples
 coldata <- coldata[1:2,]
@@ -149,14 +263,14 @@ coldata
 
 Once our sample table has been updated properly to point to the quant.sf files and the sample name for each file, we can run [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) to produce the SummarizedExperiment object with this simple code:
 
-```{r}
+```{r Clean 02}
 library("tximeta")
 se <- tximeta(coldata)
 ```
 
-The dimensions and rownames of the SummarizedExperiment object can be viewed with this code:
+The dimensions and rownames of the Summarized Experiment object can be viewed with this code:
 
-```{r}
+```{r Clean 03}
 dim(se)
 head(rownames(se))
 ```
@@ -167,7 +281,7 @@ The SummarizedExperiment object contains 205,870 rows and 2 columns. The rows co
 
 The components of a SummarizedExperiment object are diagrammed with the following code:
 
-```{r}
+```{r Clean 04}
 par(mar=c(0,0,0,0))
 plot(1,1,xlim=c(0,100),ylim=c(0,100),bty="n",
      type="n",xlab="",ylab="",xaxt="n",yaxt="n")
@@ -189,13 +303,13 @@ The SummarizedExperiment object contains three component parts: `rowRanges`, `co
 
 Since we will be performing gene-level analysis, we convert the transcript level data to gene level data with [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) with the following code:
 
-```{r}
+```{r Clean 05}
 gse <- summarizeToGene(se)
 ```
 
 Examination of gse with `dim()` and `head(rownames())` shows that the number of rows and columns remains unchanged. The rownames have changed from the Ensembl transcript ID to Ensembl gene ID, indicating the `assay` contains gene level data instead of transcript level data now.
 
-```{r}
+```{r Clean 06}
 dim(gse)
 head(rownames(gse))
 ```
@@ -204,7 +318,7 @@ head(rownames(gse))
 
 For demonstrative purposes, this workflow will use the `gse` provided by the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package.
 
-```{r}
+```{r Clean 07}
 ##loadfullgse
 data(gse)
 gse
@@ -212,28 +326,28 @@ gse
 
 The full gse contains 58294 rowsand 8 columns. The rownames are gene_id and the colnames are SRR IDs. Data about the genes are contained in the `rowRanges` component, phenotypic data about the samples are contained in the `colData` component, and the count matrices are contained in the `assay` component.
 
-```{r}
+```{r Clean 08}
 ## assaysgse
 assayNames(gse)
 head(assay(gse), 3)
 colSums(assay(gse))
 ```
 
-```{r}
+```{r Clean 09}
 ##rowrangesgse
 rowRanges(gse)
 ```
 
 `rowRanges` for `gse` contains the genomic range annotation data that includes the Ensembl gene ID, genomic coordinates, and strand.
 
-```{r}
+```{r  Clean 10}
 ##lookseqinfo
 seqinfo(rowRanges(gse))
 ```
 
 `seqinfo` for `rowRanges` contains metadata about the chromosome sequences used.
 
-```{r}
+```{r Clean 11}
 ##coldatagse
 colData(gse)
 ```
@@ -246,7 +360,7 @@ This analysis will use the [DESeq2](https://www.bioconductor.org/packages/releas
 
 The donor and condition variables in `colData` can be examined directly with `$` subsetting of the SummarizedExperiment (or DESeqDataSet).
 
-```{r}
+```{r  Clean 12}
 ##gsevars
 
 gse$donor
@@ -255,7 +369,7 @@ gse$condition
 
 We rename the `colData` variables `donor` and `condition` to `cell` and `dex`.
 
-```{r}
+```{r Clean 13}
 ##gsevarsrename
 gse$cell <- gse$donor 
 gse$dex <- gse$condition
@@ -263,7 +377,7 @@ gse$dex <- gse$condition
 
 `dex` is a factor with 2 levels. We rename the levels of `dex`; `untrt` replaces `Untreated` and `trt` replaces `Dexamethasone`. Using [magrittr](https://cran.rstudio.com/web/packages/magrittr/index.html) [@bache_magrittr_2014], the levels of `dex` are ordered properly with relevel so that `untrt` is the first level. (`dex` was already properly ordered, so this example shows how to relevel the factor if not already properly ordered)
 
-```{r}
+```{r Clean 14}
 ##renamelevels
 
 levels(gse$dex)
