@@ -70,24 +70,24 @@ This Quarto document reproduces, as an academic exercise, the Bioconductor workf
 The recommended alternative pipeline demonstration will use Salmon for transcript quantification of the FASTQ reads. The quantification files produced by Salmon are loaded into the package [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html), which will provide genomic annotation and create the Bioconductor friendly data container SummarizedExperiment [@love_tximeta_2020]. The SummarizedExperiment data container are loaded into DESeq2 to create the data object DESeqDataSet, which is used for analysis.
 
 # UPDATE: my edits - base to alter
-## Intro
-### Base intro/ descript
-* see above/make updates to exisiting
+## Introduction
+
+The authors examined a heterogeneous dataset from a study of cell types in the mouse brain (Zeisel et al. 2015). This contains approximately 3000 cells of varying types such as oligodendrocytes, microglia and neurons. Individual cells were isolated using the Fluidigm C1 microfluidics system (Pollen et al. 2014) and library preparation was performed on each cell using a UMI-based protocol. After sequencing, expression was quantified by counting the number of unique molecular identifiers (UMIs) mapped to each gene.
 
 ## Data Loading
 The Authors obtained a `SingleCellExperiment` object for this dataset using the relevant function from the `scRNAseq` package. The idiosyncrasies of the published dataset means that we need to do some extra work to merge together redundant rows corresponding to alternative genomic locations for the same gene.
 
 ```{r DL01}
-# start load setup
-library(scRNAseq) # make sure to load up top
+# Packages/calls
+library(scRNAseq) # (Load up top)
 sce.zeisel <- ZeiselBrainData()
 
-library(scater) # make sure to load up top
+library(scater) # (Load up top)
 sce.zeisel <- aggregateAcrossFeatures(sce.zeisel, 
     id=sub("_loc[0-9]+$", "", rownames(sce.zeisel)))
 
-# We also fetch the Ensembl gene IDs, just in case we need them later.
-library(org.Mm.eg.db) # make sure to load up top
+# Fetch the Ensembl gene IDs, just in case they're needed them later.
+library(org.Mm.eg.db) # (Load up top)
 rowData(sce.zeisel)$Ensembl <- mapIds(org.Mm.eg.db, 
     keys=rownames(sce.zeisel), keytype="SYMBOL", column="ENSEMBL")
 ```
@@ -106,10 +106,14 @@ qc <- quickPerCellQC(stats, percent_subsets=c("altexps_ERCC_percent",
     "subsets_Mt_percent"))
 sce.zeisel <- sce.zeisel[,!qc$discard]
 
+```
+
+```{r F01}
 # 
 colData(unfiltered) <- cbind(colData(unfiltered), stats)
 unfiltered$discard <- qc$discard
 
+# Figure 01
 gridExtra::grid.arrange(
     plotColData(unfiltered, y="sum", colour_by="discard") +
         scale_y_log10() + ggtitle("Total count"),
@@ -123,9 +127,10 @@ gridExtra::grid.arrange(
 )
 ```
 
-Figure 2.1: Distribution of each QC metric across cells in the Zeisel brain dataset. Each point represents a cell and is colored according to whether that cell was discarded. 
+Figure 1: Distribution of each QC metric across cells in the Zeisel brain dataset. Each point represents a cell and is colored according to whether that cell was discarded. 
 
-```{r QC02}
+```{r F02}
+# figure 02
 gridExtra::grid.arrange(
     plotColData(unfiltered, x="sum", y="subsets_Mt_percent",
         colour_by="discard") + scale_x_log10(),
@@ -135,9 +140,9 @@ gridExtra::grid.arrange(
 )
 ```
 
-Figure 2.2: Percentage of mitochondrial reads in each cell in the Zeisel brain dataset, compared to the total count (left) or the percentage of spike-in reads (right). Each point represents a cell and is colored according to whether that cell was discarded.
+Figure 2: Percentage of mitochondrial reads in each cell in the Zeisel brain dataset, compared to the total count (left) or the percentage of spike-in reads (right). Each point represents a cell and is colored according to whether that cell was discarded.
 
-We also examine the number of cells removed for each reason.
+Also examine the number of cells removed for each reason.
 
 ```{r QC03}
 # gives table
@@ -155,707 +160,201 @@ sce.zeisel <- computeSumFactors(sce.zeisel, cluster=clusters)
 sce.zeisel <- logNormCounts(sce.zeisel)
 ```
 
+Look into data structure, and summary statistics
+```{r Sum01}
+# summary table, min/max etc.
+summary(sizeFactors(sce.zeisel))
+```
+
+```{r F03}
+# Figure 03, plot for diff in size factors from dataset
+plot(librarySizeFactors(sce.zeisel), sizeFactors(sce.zeisel), pch=16,
+    xlab="Library size factors", ylab="Deconvolution factors", log="xy")
+```
+
+Figure 3: Relationship between the library size factors and the deconvolution size factors in the Zeisel brain dataset.
 
 ## Variance Modeling
 
+In theory, we should block on the plate of origin for each cell. However, only 20-40 cells are available on each plate, and the population is also highly heterogeneous. This means that we cannot assume that the distribution of sampled cell types on each plate is the same. Thus, to avoid regressing out potential biology, we will not block on any factors in this analysis.
+
+```{r VM01}
+# 
+dec.zeisel <- modelGeneVarWithSpikes(sce.zeisel, "ERCC")
+top.hvgs <- getTopHVGs(dec.zeisel, prop=0.1)
+```
+
+From Figure 4 below, the technical and total variances are much smaller than those in the read-based datasets. This is due to the use of UMIs, which reduces the noise caused by variable PCR amplification. Furthermore, the spike-in trend is consistently lower than the variances of the endogenous gene, which reflects the heterogeneity in gene expression across cells of different types.
+
+```{r F04}
+# Figure 04
+plot(dec.zeisel$mean, dec.zeisel$total, pch=16, cex=0.5,
+    xlab="Mean of log-expression", ylab="Variance of log-expression")
+curfit <- metadata(dec.zeisel)
+points(curfit$mean, curfit$var, col="red", pch=16)
+curve(curfit$trend(x), col='dodgerblue', add=TRUE, lwd=2)
+```
+
+Figure 4: Per-gene variance as a function of the mean for the log-expression values in the Zeisel brain dataset. Each point represents a gene (black) with the mean-variance trend (blue) fitted to the spike-in transcripts (red). 
+
 ## Dimentionality Reduction
+
+```{r DM01}
+# 
+library(BiocSingular) # (Load up top)
+set.seed(101011001)
+sce.zeisel <- denoisePCA(sce.zeisel, technical=dec.zeisel, subset.row=top.hvgs)
+sce.zeisel <- runTSNE(sce.zeisel, dimred="PCA")
+```
+
+We have a look at the number of PCs retained by denoisePCA().
+
+```{r DM02}
+# 
+ncol(reducedDim(sce.zeisel, "PCA"))
+```
 
 ## Clustering
 
+```{r C01}
+# 
+snn.gr <- buildSNNGraph(sce.zeisel, use.dimred="PCA")
+colLabels(sce.zeisel) <- factor(igraph::cluster_walktrap(snn.gr)$membership)
+
+# table for the cluster labels
+table(colLabels(sce.zeisel))
+
+# t-SNE plot for labeled clusters
+plotTSNE(sce.zeisel, colour_by="label")
+
+```
+
+Figure 5: Obligatory t-SNE plot of the Zeisel brain dataset, where each point represents a cell and is colored according to the assigned cluster. 
+
 ## Intertrepation
 
+The focus on upregulated marker genes as these can quickly provide positive identification of cell type in a heterogeneous population. We examine the table for cluster 1, in which log-fold changes are reported between cluster 1 and every other cluster. The same output is provided for each cluster in order to identify genes that discriminate between clusters.
 
-### Experimental Data (example)
-
-Included with the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package are eight BAM files (each BAM file is a subset of the total reads for demonstration purposes), a small subset of a gene transfer format (GTF) annotation file relevant for the subset BAM files, a full count matrix corresponding to all experimental data, a sample table in CSV format, and two FASTQ files [@himes_rna-seq_2014].
-
-The experimental data comes from Human airway smooth muscle (HASM) cell lines isolated from 4 healthy white male aborted lung transplant donors. The cell lines were treated with Dexamethasone or a control vehicle for 18 hours.
-
-
-## Preparing quantification input to DESeq2 (example)
-
-The recommended pipeline is to use Salmon to quantify transcript abundance. The [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) workflow vignette recommends this guide <https://combine-lab.github.io/salmon/getting_started/> to use Salmon to produce plain-text, tab-separated quant.sf files. Quant.sf files contain the following: Name of target transcript, length of target transcript in nucleotides, EffectiveLength, Transcripts Per Million (TPM), and NumReads (Salmon's estimate of the number of reads mapping to each transcript that was quantified).
-
-### Snakemake (example)
-
-The following Snakemake file text is provided by the [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) vingette.
-
-```python
-DATASETS = ["SRR1039508",
-            "SRR1039509",
-            "SRR1039512",
-            "SRR1039513",
-            "SRR1039516",
-            "SRR1039517",
-            "SRR1039520",
-            "SRR1039521"]
-
-SALMON = "/path/to/salmon_0.14.1/bin/salmon"
-
-rule all:
-  input: expand("quants/{dataset}/quant.sf", dataset=DATASETS)
-
-rule salmon_quant:
-    input:
-        r1 = "fastq/{sample}_1.fastq.gz",
-        r2 = "fastq/{sample}_2.fastq.gz",
-        index = "/path/to/gencode.v29_salmon_0.14.1"
-    output:
-        "quants/{sample}/quant.sf"
-    params:
-        dir = "quants/{sample}"
-    shell:
-        "{SALMON} quant -i {input.index} -l A -p 6 --validateMappings \
-         --gcBias --numGibbsSamples 20 -o {params.dir} \
-         -1 {input.r1} -2 {input.r2}"
+```{r I01}
+# gives table for the top diff expr genes as markers
+markers <- findMarkers(sce.zeisel, direction="up")
+marker.set <- markers[["1"]]
+head(marker.set[,1:8], 10) # only first 8 columns, for brevity
 ```
 
-The Snakemake file requires the eight runs with the listed SRR IDs to be downloaded from the Sequence Read Archive and for an index to be created at:
+Below, Figure 6 indicates that most of the top markers are strongly DE in cells of cluster 1 compared to some or all of the other clusters. We can use these markers to identify cells from cluster 1 in validation studies with an independent population of cells. A quick look at the markers suggest that cluster 1 represents interneurons based on expression of Gad1 and Slc6a1 (Zeng et al. 2012).
 
-`/path/to/gencode.vVV_salmon_X.Y.Z`
-
-VV stands for the specific release of the reference transcripts (e.g. 47) and X.Y.Z stands for the specific release of Salmon.
-
-The Salmon index can be created with the command:
-
-`salmon index -t transcripts.fa.gz -i name_of_index`
-
-The [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) vingette recommends the use of genomic decoy sequences (see Salmon's [documentation](https://salmon.readthedocs.io/en/latest/salmon.html#preparing-transcriptome-indices-mapping-based-mode)) to improve quantification accuracy, as demonstrated by Srivastava et al (2020). The human reference transcriptome can be obtained from [GENCODE](https://www.gencodegenes.org/).
-
-### Reading in data with tximeta (example)
-
-The transcript quantification files produced by Salmon can be brought into the bioconductor environment using [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) to produce the SummarizedExperiment data object [@love_tximeta_2020]. To demonstrate with the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package [@himes_rna-seq_2014], the following code loads the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) library, identifies and assigns the variable "dir" to represent the local directories that contain the quant.sf Salmon files. The [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package only provides two quant.sf files for runs SRR1039508 and SRR1039509 for demonstrative purposes.
-
-```{r Load}
-## loadairway
-library("airway")
-
-## dir
-dir <- system.file("extdata", package="airway", mustWork=TRUE)
-
-## list.files
-list.files(dir)
-list.files(file.path(dir, "quants"))
+```{r I02}
+# heatmap
+top.markers <- rownames(marker.set)[marker.set$Top <= 10]
+plotHeatmap(sce.zeisel, features=top.markers, order_columns_by="label")
 ```
 
-[tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) requires a CSV or TSV sample table. The [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package provides an example of a sample table containing important sample identifying information, such as Sample Name, treatment/condition, sequencing run, and other conditions and identifying information for each sample.
+Figure 6: Heatmap of the log-expression of the top markers for cluster 1 compared to each other cluster. Cells are ordered by cluster and the color is scaled to the log-expression of each gene in each cell.
 
-```{r Import}
-## sampleinfo
-csvfile <- file.path(dir, "sample_table.csv")
-coldata <- read.csv(csvfile, row.names=1, stringsAsFactors=FALSE)
-coldata
+An alternative visualization approach is to plot the log-fold changes to all other clusters directly (Figure 7). This is more concise and is useful in situations involving many clusters that contain different numbers of cells.
+
+```{r I03}
+# heatmap, alt of first
+library(pheatmap) # (Load up top)
+logFCs <- getMarkerEffects(marker.set[1:50,])
+pheatmap(logFCs, breaks=seq(-5, 5, length.out=101))
 ```
 
-However, [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) requires a sample table with at least two columns provided as: "files" and "names". "files" will contain a pointer to the quant.sf files. "names" will contain unique names that identify samples.
+{cap} Figure 7: Heatmap of the log-fold changes of the top markers for cluster 1 compared to each other cluster. 
+
+## Session Information:
+
+The environment the authors used in this workflow, versions, packages used, libraries, etc.
+
+R version 4.6.0 RC (2026-04-17 r89917)
+Platform: x86_64-pc-linux-gnu
+Running under: Ubuntu 24.04.4 LTS
+
+Matrix products: default
+BLAS:   /home/biocbuild/bbs-3.23-bioc/R/lib/libRblas.so 
+LAPACK: /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.12.0  LAPACK version 3.12.0
+
+locale:
+ [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
+ [3] LC_TIME=en_GB              LC_COLLATE=C              
+ [5] LC_MONETARY=en_US.UTF-8    LC_MESSAGES=en_US.UTF-8   
+ [7] LC_PAPER=en_US.UTF-8       LC_NAME=C                 
+ [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+[11] LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C       
+
+time zone: America/New_York
+tzcode source: system (glibc)
+
+attached base packages:
+[1] stats4    stats     graphics  grDevices utils     datasets  methods  
+[8] base     
+
+other attached packages:
+ [1] pheatmap_1.0.13             BiocSingular_1.28.0        
+ [3] scran_1.40.0                org.Mm.eg.db_3.23.0        
+ [5] AnnotationDbi_1.74.0        scater_1.40.0              
+ [7] ggplot2_4.0.3               scuttle_1.22.0             
+ [9] scRNAseq_2.25.0             SingleCellExperiment_1.34.0
+[11] SummarizedExperiment_1.42.0 Biobase_2.72.0             
+[13] GenomicRanges_1.64.0        Seqinfo_1.2.0              
+[15] IRanges_2.46.0              S4Vectors_0.50.0           
+[17] BiocGenerics_0.58.0         generics_0.1.4             
+[19] MatrixGenerics_1.24.0       matrixStats_1.5.0          
+[21] BiocStyle_2.40.0            rebook_1.22.0              
+
+loaded via a namespace (and not attached):
+  [1] RColorBrewer_1.1-3       jsonlite_2.0.0           CodeDepends_0.6.7       
+  [4] magrittr_2.0.5           ggbeeswarm_0.7.3         GenomicFeatures_1.64.0  
+  [7] gypsum_1.8.0             farver_2.1.2             rmarkdown_2.31          
+ [10] BiocIO_1.22.0            vctrs_0.7.3              memoise_2.0.1           
+ [13] Rsamtools_2.28.0         RCurl_1.98-1.18          htmltools_0.5.9         
+ [16] S4Arrays_1.12.0          AnnotationHub_4.2.0      curl_7.1.0              
+ [19] BiocNeighbors_2.6.0      Rhdf5lib_2.0.0           SparseArray_1.12.0      
+ [22] rhdf5_2.56.0             sass_0.4.10              alabaster.base_1.12.0   
+ [25] bslib_0.10.0             alabaster.sce_1.12.0     httr2_1.2.2             
+ [28] cachem_1.1.0             GenomicAlignments_1.48.0 igraph_2.3.0            
+ [31] lifecycle_1.0.5          pkgconfig_2.0.3          rsvd_1.0.5              
+ [34] Matrix_1.7-5             R6_2.6.1                 fastmap_1.2.0           
+ [37] digest_0.6.39            dqrng_0.4.1              irlba_2.3.7             
+ [40] ExperimentHub_3.2.0      RSQLite_2.4.6            beachmat_2.28.0         
+ [43] labeling_0.4.3           filelock_1.0.3           httr_1.4.8              
+ [46] abind_1.4-8              compiler_4.6.0           bit64_4.8.0             
+ [49] withr_3.0.2              S7_0.2.2                 BiocParallel_1.46.0     
+ [52] viridis_0.6.5            DBI_1.3.0                HDF5Array_1.40.0        
+ [55] alabaster.ranges_1.12.0  alabaster.schemas_1.12.0 rappdirs_0.3.4          
+ [58] DelayedArray_0.38.0      bluster_1.22.0           rjson_0.2.23            
+ [61] tools_4.6.0              vipor_0.4.7              otel_0.2.0              
+ [64] beeswarm_0.4.0           glue_1.8.1               h5mread_1.4.0           
+ [67] restfulr_0.0.16          rhdf5filters_1.24.0      grid_4.6.0              
+ [70] Rtsne_0.17               cluster_2.1.8.2          gtable_0.3.6            
+ [73] ensembldb_2.36.0         metapod_1.20.0           ScaledMatrix_1.20.0     
+ [76] XVector_0.52.0           ggrepel_0.9.8            BiocVersion_3.23.1      
+ [79] pillar_1.11.1            limma_3.68.0             dplyr_1.2.1             
+ [82] BiocFileCache_3.2.0      lattice_0.22-9           rtracklayer_1.72.0      
+ [85] bit_4.6.0                tidyselect_1.2.1         locfit_1.5-9.12         
+ [88] Biostrings_2.80.0        knitr_1.51               gridExtra_2.3           
+ [91] bookdown_0.46            ProtGenerics_1.44.0      edgeR_4.10.0            
+ [94] xfun_0.57                statmod_1.5.1            UCSC.utils_1.8.0        
+ [97] lazyeval_0.2.3           yaml_2.3.12              evaluate_1.0.5          
+[100] codetools_0.2-20         cigarillo_1.2.0          tibble_3.3.1            
+[103] alabaster.matrix_1.12.0  BiocManager_1.30.27      graph_1.90.0            
+[106] cli_3.6.6                jquerylib_0.1.4          dichromat_2.0-0.1       
+[109] Rcpp_1.1.1-1.1           GenomeInfoDb_1.48.0      dir.expiry_1.20.0       
+[112] dbplyr_2.5.2             png_0.1-9                XML_3.99-0.23           
+[115] parallel_4.6.0           blob_1.3.0               AnnotationFilter_1.36.0 
+[118] bitops_1.0-9             viridisLite_0.4.3        alabaster.se_1.12.0     
+[121] scales_1.4.0             crayon_1.5.3             rlang_1.2.0             
+[124] cowplot_1.2.0            KEGGREST_1.52.0
+
+## References (authors)
+
+Pollen, A. A., T. J. Nowakowski, J. Shuga, X. Wang, A. A. Leyrat, J. H. Lui, N. Li, et al. 2014. “Low-coverage single-cell mRNA sequencing reveals cellular heterogeneity and activated signaling pathways in developing cerebral cortex.” Nat. Biotechnol. 32 (10): 1053–8.
+
+Zeisel, A., A. B. Munoz-Manchado, S. Codeluppi, P. Lonnerberg, G. La Manno, A. Jureus, S. Marques, et al. 2015. “Brain structure. Cell types in the mouse cortex and hippocampus revealed by single-cell RNA-seq.” Science 347 (6226): 1138–42.
+
+Zeng, H., E. H. Shen, J. G. Hohmann, S. W. Oh, A. Bernard, J. J. Royall, K. J. Glattfelder, et al. 2012. “Large-scale cellular-resolution gene profiling in human neocortex reveals species-specific molecular signatures.” Cell 149 (2): 483–96.
 
-The sample table provided by [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) does not contain these two required columns ("names" and "files"). We create these required columns with the following code:
-
-```{r Clean 01}
-##makecoldata
-#this code for vignette loading salmon quant on select samples
-coldata <- coldata[1:2,]
-coldata$names <- coldata$Run
-coldata$files <- file.path(dir, "quants", coldata$names, "quant.sf.gz")
-file.exists(coldata$files)
-coldata
-```
-
-Once our sample table has been updated properly to point to the quant.sf files and the sample name for each file, we can run [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) to produce the SummarizedExperiment object with this simple code:
-
-```{r Clean 02}
-library("tximeta")
-se <- tximeta(coldata)
-```
-
-The dimensions and rownames of the Summarized Experiment object can be viewed with this code:
-
-```{r Clean 03}
-dim(se)
-head(rownames(se))
-```
-
-The SummarizedExperiment object contains 205,870 rows and 2 columns. The rows correspond to transcript level data, indicated by the rownames being the Ensembl transcript ID.
-
-### Summarized Experiment object (example)
-
-The components of a SummarizedExperiment object are diagrammed with the following code:
-
-```{r Clean 04}
-par(mar=c(0,0,0,0))
-plot(1,1,xlim=c(0,100),ylim=c(0,100),bty="n",
-     type="n",xlab="",ylab="",xaxt="n",yaxt="n")
-polygon(c(45,90,90,45),c(5,5,70,70),col="pink",border=NA)
-polygon(c(45,90,90,45),c(68,68,70,70),col="pink3",border=NA)
-text(67.5,40,"assay(s)")
-text(67.5,35,'e.g. "counts", ...')
-polygon(c(10,40,40,10),c(5,5,70,70),col="skyblue",border=NA)
-polygon(c(10,40,40,10),c(68,68,70,70),col="skyblue3",border=NA)
-text(25,40,"rowRanges")
-polygon(c(45,90,90,45),c(75,75,95,95),col="palegreen",border=NA)
-polygon(c(45,47,47,45),c(75,75,95,95),col="palegreen3",border=NA)
-text(67.5,85,"colData")
-```
-
-The SummarizedExperiment object contains three component parts: `rowRanges`, `colData`, and `assay`. The `colData` component contains sample annotations, such as sample ID. The `assay` component contains the matrix of counts (e.g. "counts", "abundance", "length"). The `rowRanges` contains annotation for corresponding row in the `assay` part (e.g. seqnames, genomic coordinates, strand, tx_id).
-
-### Summarize to gene level (example)
-
-Since we will be performing gene-level analysis, we convert the transcript level data to gene level data with [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html) with the following code:
-
-```{r Clean 05}
-gse <- summarizeToGene(se)
-```
-
-Examination of gse with `dim()` and `head(rownames())` shows that the number of rows and columns remains unchanged. The rownames have changed from the Ensembl transcript ID to Ensembl gene ID, indicating the `assay` contains gene level data instead of transcript level data now.
-
-```{r Clean 06}
-dim(gse)
-head(rownames(gse))
-```
-
-### gse from airway (example)
-
-For demonstrative purposes, this workflow will use the `gse` provided by the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package.
-
-```{r Clean 07}
-##loadfullgse
-data(gse)
-gse
-```
-
-The full gse contains 58294 rowsand 8 columns. The rownames are gene_id and the colnames are SRR IDs. Data about the genes are contained in the `rowRanges` component, phenotypic data about the samples are contained in the `colData` component, and the count matrices are contained in the `assay` component.
-
-```{r Clean 08}
-## assaysgse
-assayNames(gse)
-head(assay(gse), 3)
-colSums(assay(gse))
-```
-
-```{r Clean 09}
-##rowrangesgse
-rowRanges(gse)
-```
-
-`rowRanges` for `gse` contains the genomic range annotation data that includes the Ensembl gene ID, genomic coordinates, and strand.
-
-```{r  Clean 10}
-##lookseqinfo
-seqinfo(rowRanges(gse))
-```
-
-`seqinfo` for `rowRanges` contains metadata about the chromosome sequences used.
-
-```{r Clean 11}
-##coldatagse
-colData(gse)
-```
-
-The `colData` for `gse` contains sample identifying information provided by the sample table from earlier.
-
-## DESeq DataSet (example)
-
-This analysis will use the [DESeq2](https://www.bioconductor.org/packages/release/bioc/html/DESeq2.html) package for differential expression [@love_moderated_2014]. [DESeq2](https://www.bioconductor.org/packages/release/bioc/html/DESeq2.html) uses the DESeqDataSet object that is built on top of the SummarizedExperiment object.
-
-The donor and condition variables in `colData` can be examined directly with `$` subsetting of the SummarizedExperiment (or DESeqDataSet).
-
-```{r  Clean 12}
-##gsevars
-
-gse$donor
-gse$condition
-```
-
-We rename the `colData` variables `donor` and `condition` to `cell` and `dex`.
-
-```{r Clean 13}
-##gsevarsrename
-gse$cell <- gse$donor 
-gse$dex <- gse$condition
-```
-
-`dex` is a factor with 2 levels. We rename the levels of `dex`; `untrt` replaces `Untreated` and `trt` replaces `Dexamethasone`. Using [magrittr](https://cran.rstudio.com/web/packages/magrittr/index.html) [@bache_magrittr_2014], the levels of `dex` are ordered properly with relevel so that `untrt` is the first level. (`dex` was already properly ordered, so this example shows how to relevel the factor if not already properly ordered)
-
-```{r Clean 14}
-##renamelevels
-
-levels(gse$dex)
-# when renaming levels, the order must be preserved!
-levels(gse$dex) <- c("untrt", "trt")
-
-##gsedex
-
-library("magrittr") 
-gse$dex %<>% relevel("untrt")
-gse$dex
-```
-
-We can view how many millions of fragments per sample could be mapped:
-
-```{r}
-##countreads
-round( colSums(assay(gse)) / 1e6, 1 )
-```
-
-The DESeqDataSet is created with the following code:
-
-```{r}
-##loaddeseq2
-
-library("DESeq2")
-
-##makedds
-
-dds <- DESeqDataSet(gse, design = ~ cell + dex)
-```
-
-We specify the fixed-effects experimental design within the `DESeqDataSet()` call by using R's formula notation as an argument (i.e. \~ group + treatment + group:treatment). For our analysis, we are testing for the effect of `dex` (treatment) while controlling for `cell` (donor). Our supplied design is thus `design = ~ cell + dex`.
-
-## Exploratory analysis and visualization (example)
-
-### Prefiltering (example)
-
-We remove rows that contain no or nearly no genomic expression with the following code:
-
-```{r}
-##Prefiltering
-nrow(dds)
-smallestGroupSize <- 4
-keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
-dds <- dds[keep,]
-nrow(dds)
-```
-
-The prefiltering filters out rows (genes) that contain less than 10 fragments for their respective gene in fewer samples than the smallest group size (4 in this case). Prefiltering has reduced the number of rows in the `gse` from 58294 to 16637. Additional weighting/filtering to improve power is applied at a later step.
-
-### Variance stabilizing transformation and the rlog (example)
-### (check here, would be good to run PCA+UMAP [not t-SNE] for my proj)
-
-We improve the homoscedasticity of the rna-seq data by applying the variance stabilizing transformation (`vst`) [@anders_differential_2010] or regularized logarithm transformation (`rlog`) [@love_moderated_2014].
-
-```{r}
-#| fig-width: 6
-#| fig-height: 2.5
-#| warning: false
-##vst
-vsd <- vst(dds, blind = FALSE)
-head(assay(vsd), 3)
-colData(vsd)
-
-##rlog
-rld <- rlog(dds, blind = FALSE)
-head(assay(rld), 3)
-
-#transformplot, fig.width = 6, fig.height = 2.5
-library("dplyr")
-library("ggplot2")
-
-dds <- estimateSizeFactors(dds)
-
-df <- bind_rows(
-  as_data_frame(log2(counts(dds, normalized=TRUE)[, 1:2]+1)) %>%
-         mutate(transformation = "log2(x + 1)"),
-  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
-  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
-  
-colnames(df)[1:2] <- c("x", "y")  
-
-lvls <- c("log2(x + 1)", "vst", "rlog")
-df$transformation <- factor(df$transformation, levels=lvls)
-
-ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
-  coord_fixed() + facet_grid( . ~ transformation)
-```
-
-`VST` and `rlog` both improve the homogeneity of variance compared to a traditional log transformation approach of taking the logarithm of the normalized count values and adding a pseudo-count, e.g. log2(x + 1). `VST` is recommended for medium to large data sets, while `rlog` works well on small data sets and when a wide range of sequencing depth across samples. `VST` and `rlog` transformations are not intended for differential testing. `VST` and `rlog` return a DESeqTransform object. Transformed values are stored in the `assay` component, but are no longer counts.
-
-### Sample distances (example)
-
-To assess similarity between samples, the Euclidean distance between samples is calculated using the `VST` data. The R function `dist()` expects the samples to be rows and dimensions to be columns. The `assay` componment with `VST` data (`VSD`) needs to be transposed prior to being provided to the `dist()`
-
-```{r}
-sampleDists <- dist(t(assay(vsd)))
-sampleDists
-```
-
-### Heatmap (Pheatmap) sample distances using variance stabilizing transformation (example)
-
-The distances can be visualized using a heat map produced by the [pheatmap](https://cran.r-project.org/web/packages/pheatmap/index.html) package [@kolde_pheatmap_2010].
-
-The `sampleDists` is provided to the `clustering_distance` argument of the `pheatmap()` function. The `rownames` are changed for convenience and a blue color palette is used for the heat map.
-
-```{r}
-library(pheatmap)
-library(RColorBrewer)
-
-##distheatmap
-sampleDistMatrix <- as.matrix( sampleDists )
-rownames(sampleDistMatrix) <- paste( vsd$dex, vsd$cell, sep = " - " )
-colnames(sampleDistMatrix) <- NULL
-colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-pheatmap(sampleDistMatrix,
-         clustering_distance_rows = sampleDists,
-         clustering_distance_cols = sampleDists,
-         col = colors)
-```
-
-The heat map of sample to sample distances using `VST` values indicates that samples with the same treatment condition are more similar (less distance) than samples from different treatment groups.
-
-### Heat map sample distances using Poisson distance (example)
-
-Sample to sample distances using the Poisson distance can be represented in a heat map using the [PoiClaClu](https://cran.r-project.org/web/packages/PoiClaClu/index.html) package [@daniela_witten_poiclaclu_2011]. The `PoissonDistance()` function uses original count matrix values and requires the samples to be provided as rows. The `dds` counts need to be transposed prior to being provided.
-
-```{r}
-library("PoiClaClu")
-
-#transpose dds sample columns to sample rows (original count matrix, not normalized, use dds not vsd or rld)
-poisd <- PoissonDistance(t(counts(dds)))
-
-#plot heatmap
-samplePoisDistMatrix <- as.matrix( poisd$dd )
-rownames(samplePoisDistMatrix) <- paste( dds$dex, dds$cell, sep=" - " )
-colnames(samplePoisDistMatrix) <- NULL
-pheatmap(samplePoisDistMatrix,
-         clustering_distance_rows = poisd$dd,
-         clustering_distance_cols = poisd$dd,
-         col = colors)
-```
-
-### PCA plot (VST data) (example)
-### (here, keep PCA - remove t-SNE for UMAP)
-```{r}
-#plot PCA
-plotPCA(vsd, intgroup = c("dex", "cell"))
-
-#principal component loadings
-pcaData <- plotPCA(vsd, intgroup = c( "dex", "cell"), returnData = TRUE)
-pcaData
-
-percentVar <- round(100 * attr(pcaData, "percentVar"))
-
-#use ggplot to construct PCA plot after returning loadings
-ggplot(pcaData, aes(x = PC1, y = PC2, color = dex, shape = cell)) +
-  geom_point(size =3) +
-  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
-  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
-  coord_fixed() +
-  ggtitle("PCA with VST data")
-
-```
-
-The PCA plots indicate treatment condition as the greatest source of variance. PC1 accounts for 52% of the explained variance and clearly separates the samples by treatment condition. PC2 accounts for 22% of the explained variance, with a clear separation of samples by donor on PC2. Examining the principal component loadings, the samples with `trt` treatment condition (`dex`) clearly show their presence contributing to PC1 due to the positive loadings. The `untrt` samples have negative loadings of similar magnitude to the positive loadings of `trt` for PC1, clearly showing their absence contributes to PC1. Interestingly, some donors `trt` loadings have greater magnitude contributing to PC1, while some donors `untrt` samples have negative loadings of greater magnitude contributing to PC1 than their `trt` paired sample.
-
-### Generalized PCA plot (example)
-
-```{r}
-library(glmpca)
-gpca <- glmpca(counts(dds), L=2)
-gpca.dat <- gpca$factors
-gpca.dat$dex <- dds$dex
-gpca.dat$cell <- dds$cell
-
-ggplot(gpca.dat, aes(x = dim1, y = dim2, color = dex, shape = cell)) +
-  geom_point(size =3) + coord_fixed() + ggtitle("glmpca - Generalized PCA")
-```
-
-### MDS plot (example)
-Multidimensional scaling (MDS) requires a matrix of distances instead of matrix of counts.
-```{r}
-#multidimensional scaling (MDS) function in base R. 
-#This is useful when we don’t have a matrix of data, but only a matrix of distances
-
-#MDS plot using VST data
-mds <- as.data.frame(colData(vsd))  %>%
-         cbind(cmdscale(sampleDistMatrix))
-ggplot(mds, aes(x = `1`, y = `2`, color = dex, shape = cell)) +
-  geom_point(size = 3) + coord_fixed() + ggtitle("MDS with VST data")
-```
-MDS plot using VST data
-```{r}
-# MDS with PoissonDistances
-mdsPois <- as.data.frame(colData(dds)) %>%
-   cbind(cmdscale(samplePoisDistMatrix))
-ggplot(mdsPois, aes(x = `1`, y = `2`, color = dex, shape = cell)) +
-  geom_point(size = 3) + coord_fixed() + ggtitle("MDS with PoissonDistances")
-```
-MDS plot using PoissonDistances.
-MDS visualization using Poisson distances shows similar clustering patterns as the `VSD`, confirming consistency of results across distance metrics. 
-
-## Differential expression analysis (example)
-## (need this for current 2 proj.s)
-DESeq2 function tests for differential expression using negative binomial generalized linear models informed by estimations of dispersion and estimations of size factors.
-```{r}
-#load dds into DESeq
-dds <- DESeq(dds)
-
-#building results table
-res <- results(dds)
-res
-#alternative code
-#res <- results(dds,        contrast=c("dex","trt","untrt"))
-
-summary(res)
-
-
-#if using lower False Discovery Rate threshold, supply new alpha to results function
-#res.05 <- results(dds, alpha = 0.05)
-#table(res.05$padj < 0.05)
-```
-`res$log2FoldChange` is the effect size estimate, informing us how the `trt` condition may have changed genomic expression.  `lfcSE` is the standard error estimate for the change in effect size estimate (`log2FoldChange`)
-### Multiple testing
-
-```{r}
-#num of sig and non sig log fold change
-sum(res$pvalue < 0.05, na.rm=TRUE)
-sum(!is.na(res$pvalue))
-
-#num of sig log fold change after threshold adjustment
-sum(res$padj < 0.1, na.rm=TRUE)
-
-#subset and sort log2 change estimate of strongest down and up regulation
-resSig <- subset(res, padj < 0.1)
-head(resSig[ order(resSig$log2FoldChange), ])
-head(resSig[ order(resSig$log2FoldChange, decreasing = TRUE), ])
-
-```
-
-## Plotting results (example)
-
-### Counts plot (example)
-
-```{r}
-topGene <- rownames(res)[which.min(res$padj)]
-plotCounts(dds, gene = topGene, intgroup=c("dex"))
-```
-
-```{r}
-##ggplotcountsjitter
-library(ggbeeswarm)
-geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("dex","cell"),
-                         returnData = TRUE)
-ggplot(geneCounts, aes(x = dex, y = count, color = cell)) +
-  scale_y_log10() +  geom_beeswarm(cex = 3)
-```
-
-```{r}
-##ggplotcountsgroup
-ggplot(geneCounts, aes(x = dex, y = count, color = cell, group = cell)) +
-  scale_y_log10() + geom_point(size = 3) + geom_line()
-```
-
-### MA-plot (example)
-
-```{r}
-##plotma
-library(apeglm)
-resultsNames(dds)
-res <- lfcShrink(dds, coef="dex_trt_vs_untrt", type="apeglm")
-plotMA(res, ylim = c(-5, 5))
-```
-
-```{r}
-##plotmaNoShr
-res.noshr <- results(dds, name="dex_trt_vs_untrt")
-plotMA(res.noshr, ylim = c(-5, 5))
-```
-
-```{r}
-##plotmalabel-
-plotMA(res, ylim = c(-5,5))
-topGene <- rownames(res)[which.min(res$padj)]
-with(res[topGene, ], {
-  points(baseMean, log2FoldChange, col="dodgerblue", cex=2, lwd=2)
-  text(baseMean, log2FoldChange, topGene, pos=2, col="dodgerblue")
-})
-```
-
-```{r}
-##histpvalue2
-hist(res$pvalue[res$baseMean > 1], breaks = 0:20/20,
-     col = "grey50", border = "white")
-```
-
-### Gene clustering (example)
-
-```{r}
-library(genefilter)
-topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20)
-```
-
-```{r}
-##genescluster
-mat  <- assay(vsd)[ topVarGenes, ]
-mat  <- mat - rowMeans(mat)
-anno <- as.data.frame(colData(vsd)[, c("cell","dex")])
-pheatmap(mat, annotation_col = anno)
-```
-
-
-## Annotating and exporting results (example)
-Thus far our gene level data corrosponds to Ensembl gene IDs.  Utilizing Bioconductor's annotation pacakges, alternative gene names can be mapped to potentially improve interpretation.  Load the [AnnotationDbi](https://bioconductor.org/packages/3.20/bioc/html/AnnotationDbi.html) and [org.Hs.eg.db](https://bioconductor.org/packages/3.20/data/annotation/html/org.Hs.eg.db.html) package [@herve_pages_annotationdbi_2017; @carlson_orghsegdb_2017].
-
-The [org.Hs.eg.db](https://bioconductor.org/packages/3.20/data/annotation/html/org.Hs.eg.db.html) package name can be deciphered as organism annotation package ("org") for Homo sapiens ("Hs"), organized as an AnnotationDbi database ("db"), using Entrez Gene IDs ("eg") as primary key.  The following code produces a list of available key types:
-```{r}
-library(AnnotationDbi)
-library(org.Hs.eg.db)
-
-columns(org.Hs.eg.db)
-```
-
-Use `mapIds()` function to add individual columns to a results table.  The results' table uses rownames as a key, specifying `keytype=ENSEMBL`.  `mapsIds()` uses the `column` argument to identify which information we want.  The `multiVals` argument handles potential multiple values for a single input. The following code adds a column for gene symbol and a column for Entrez ID.
-```{r}
-ens.str <- substr(rownames(res), 1, 15)
-res$symbol <- mapIds(org.Hs.eg.db,
-                     keys=ens.str,
-                     column="SYMBOL",
-                     keytype="ENSEMBL",
-                     multiVals="first")
-res$entrez <- mapIds(org.Hs.eg.db,
-                     keys=ens.str,
-                     column="ENTREZID",
-                     keytype="ENSEMBL",
-                     multiVals="first")
-```
-
-
-```{r}
-resOrdered <- res[order(res$pvalue),]
-head(resOrdered)
-```
-
-### Exporting results (example)
-
-```{r}
-resOrderedDF <- as.data.frame(resOrdered)[1:100, ]
-write.csv(resOrderedDF, file = "results.csv")
-```
-
-### Plotting fold changes in genomic space (example)
-
-```{r}
-resGR <- lfcShrink(dds, coef="dex_trt_vs_untrt", type="apeglm", format="GRanges")
-resGR
-
-ens.str <- substr(names(resGR), 1, 15)
-resGR$symbol <- mapIds(org.Hs.eg.db, ens.str, "SYMBOL", "ENSEMBL")
-
-library(Gviz)
-
-window <- resGR[topGene] + 1e6
-strand(window) <- "*"
-resGRsub <- resGR[resGR %over% window]
-naOrDup <- is.na(resGRsub$symbol) | duplicated(resGRsub$symbol)
-resGRsub$group <- ifelse(naOrDup, names(resGRsub), resGRsub$symbol)
-
-status <- factor(ifelse(resGRsub$padj < 0.05 & !is.na(resGRsub$padj),
-                        "sig", "notsig"))
-
-## gvizplot
-options(ucscChromosomeNames = FALSE)
-g <- GenomeAxisTrack()
-a <- AnnotationTrack(resGRsub, name = "gene ranges", feature = status)
-d <- DataTrack(resGRsub, data = "log2FoldChange", baseline = 0,
-               type = "h", name = "log2 fold change", strand = "+")
-plotTracks(list(g, d, a), groupAnnotation = "group",
-           notsig = "grey", sig = "hotpink")
-```
-
-
-## Removing hidden batch effects (example)
-
-### Using SVA with DESeq2 (example)
-
-```{r}
-library(sva)
-
-dat  <- counts(dds, normalized = TRUE)
-idx  <- rowMeans(dat) > 1
-dat  <- dat[idx, ]
-mod  <- model.matrix(~ dex, colData(dds))
-mod0 <- model.matrix(~   1, colData(dds))
-svseq <- svaseq(dat, mod, mod0, n.sv = 2)
-
-svseq$sv
-
-##svaplot
-par(mfrow = c(2, 1), mar = c(3,5,3,1))
-for (i in 1:2) {
-  stripchart(svseq$sv[, i] ~ dds$cell, vertical = TRUE, main = paste0("SV", i))
-  abline(h = 0)
- }
-
-ddssva <- dds
-ddssva$SV1 <- svseq$sv[,1]
-ddssva$SV2 <- svseq$sv[,2]
-design(ddssva) <- ~ SV1 + SV2 + dex
-```
-
-### Using RUV with DESeq2 (example)
-
-```{r}
-library(RUVSeq)
-
-set <- newSeqExpressionSet(counts(dds))
-idx  <- rowSums(counts(set) > 5) >= 2
-set  <- set[idx, ]
-set <- betweenLaneNormalization(set, which="upper")
-not.sig <- rownames(res)[which(res$pvalue > .1)]
-empirical <- rownames(set)[ rownames(set) %in% not.sig ]
-set <- RUVg(set, empirical, k=2)
-pData(set)
-
-## ruvplot
-par(mfrow = c(2, 1), mar = c(3,5,3,1))
-for (i in 1:2) {
-  stripchart(pData(set)[, i] ~ dds$cell, vertical = TRUE, main = paste0("W", i))
-  abline(h = 0)
- }
-
-ddsruv <- dds
-ddsruv$W1 <- set$W_1
-ddsruv$W2 <- set$W_2
-design(ddsruv) <- ~ W1 + W2 + dex
-```
-
-## Time course experiments (example)
-
-```{r}
-#| warning: false
-library(fission)
-data("fission")
-ddsTC <- DESeqDataSet(fission, ~ strain + minute + strain:minute)
-
-## fissionDE
-ddsTC <- DESeq(ddsTC, test="LRT", reduced = ~ strain + minute)
-resTC <- results(ddsTC)
-resTC$symbol <- mcols(ddsTC)$symbol
-head(resTC[order(resTC$padj),], 4)
-
-fiss <- plotCounts(ddsTC, which.min(resTC$padj), 
-                   intgroup = c("minute","strain"), returnData = TRUE)
-fiss$minute <- as.numeric(as.character(fiss$minute))
-ggplot(fiss,
-  aes(x = minute, y = count, color = strain, group = strain)) + 
-  geom_point() + stat_summary(fun.y=mean, geom="line") +
-  scale_y_log10()
-
-resultsNames(ddsTC)
-res30 <- results(ddsTC, name="strainmut.minute30", test="Wald")
-res30[which.min(res30$padj),]
-
-betas <- coef(ddsTC)
-colnames(betas)
-
-##fissionheatmap
-topGenes <- head(order(resTC$padj),20)
-mat <- betas[topGenes, -c(1,2)]
-thr <- 3 
-mat[mat < -thr] <- -thr
-mat[mat > thr] <- thr
-pheatmap(mat, breaks=seq(from=-thr, to=thr, length=101),
-         cluster_col=FALSE)
-```
 
 ## Session information (example)
 
