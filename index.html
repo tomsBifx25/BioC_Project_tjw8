@@ -143,9 +143,9 @@ Thomas Walsh
 
   <p class="date">2026-05-04</p>
 </section>
-<section id="overview" class="title-slide slide level2 center">
+<section id="overview" class="slide level2">
 <h2>Overview</h2>
-<p>This workflow demonstrates a complete single-cell RNA-seq (scRNA-seq) analysis pipeline using Bioconductor tools to:</p>
+<p>This workflow demonstrates a complete single-cell RNA-seq (scRNA-seq) analysis pipeline to Identify distinct brain cell populations (e.g., interneurons) from heterogeneous data.</p>
 <ul>
 <li>Process raw single-cell gene expression data</li>
 <li>Remove low-quality cells</li>
@@ -154,10 +154,8 @@ Thomas Walsh
 <li>Cluster cells into distinct populations</li>
 <li>Detect marker genes to assign cell types</li>
 </ul>
-<p>Goal: Identification of distinct brain cell populations (e.g., interneurons) from heterogeneous data.</p>
 </section>
-
-<section id="zeisel-mouse-brain-dataset" class="title-slide slide level2 center">
+<section id="zeisel-mouse-brain-dataset" class="slide level2">
 <h2>Zeisel Mouse Brain Dataset</h2>
 <ul>
 <li>~3,000 single cells</li>
@@ -168,8 +166,7 @@ Thomas Walsh
 </ul>
 <p>Highly heterogeneous, which is ideal for clustering Well-annotated for easy biological validation</p>
 </section>
-
-<section id="data-loading-cleaning" class="title-slide slide level2 center">
+<section id="data-loading-cleaning" class="slide level2">
 <h2>Data Loading &amp; Cleaning</h2>
 <ul>
 <li>Loaded dataset into <code>SingleCellExperiment</code></li>
@@ -177,33 +174,63 @@ Thomas Walsh
 <li>Fetch the Ensembl gene IDs</li>
 </ul>
 </section>
-
-<section id="quality-control" class="title-slide slide level2 center">
+<section id="quality-control" class="slide level2">
 <h2>Quality Control</h2>
 <p>Remove low-quality cells QC metrics: Library size Detected genes Mitochondrial % ERCC %</p>
 <p>QC Results: Low features: 3 cells High ERCC: 65 cells High mitochondrial: 128 cells Total removed: 189</p>
+<div class="cell">
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="index_files/figure-revealjs/unnamed-chunk-3-1.png" width="768"></p>
+<figcaption>Figure 1: Distribution of each QC metric across cells in the Zeisel brain dataset. Each point represents a cell and is colored according to whether that cell was discarded.</figcaption>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-stdout">
+<pre><code>TableGrob (2 x 2) "arrange": 4 grobs
+  z     cells    name           grob
+1 1 (1-1,1-1) arrange gtable[layout]
+2 2 (1-1,2-2) arrange gtable[layout]
+3 3 (2-2,1-1) arrange gtable[layout]
+4 4 (2-2,2-2) arrange gtable[layout]</code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="cell-output-display">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="index_files/figure-revealjs/unnamed-chunk-4-1.png" width="960"></p>
+<figcaption>Figure 2: Percentage of mitochondrial reads in each cell in the Zeisel brain dataset, compared to the total count (left) or the percentage of spike-in reads (right). Each point represents a cell and is colored according to whether that cell was discarded.</figcaption>
+</figure>
+</div>
+</div>
+</div>
 </section>
-
-<section id="normalization" class="title-slide slide level2 center">
+<section id="normalization" class="slide level2">
 <h2>Normalization</h2>
 <p>Normalize for sequencing depth Use deconvolution size factors</p>
-</section>
 
-<section id="variance-modeling" class="title-slide slide level2 center">
+<img data-src="index_files/figure-revealjs/unnamed-chunk-6-1.png" width="960" class="r-stretch"></section>
+<section id="variance-modeling" class="slide level2">
 <h2>Variance Modeling</h2>
 <p>Identify highly variable genes Separate biological vs technical variance</p>
-</section>
 
-<section id="dimensionality-reduction" class="title-slide slide level2 center">
+<img data-src="index_files/figure-revealjs/unnamed-chunk-8-1.png" width="960" class="r-stretch quarto-figure-center"><p class="caption">Figure 4: Per-gene variance as a function of the mean for the log-expression values in the Zeisel brain dataset. Each point represents a gene (black) with the mean-variance trend (blue) fitted to the spike-in transcripts (red).</p></section>
+<section id="dimensionality-reduction" class="slide level2">
 <h2>Dimensionality Reduction</h2>
 <ul>
 <li>PCA for denoising</li>
 <li>t-SNE for visualization</li>
 <li>number of PCs retained by <code>denoisePCA()</code>.</li>
 </ul>
+<div class="cell">
+<div class="cell-output cell-output-stdout">
+<pre><code>[1] 50</code></pre>
+</div>
+</div>
 </section>
-
-<section id="clustering-t-sne-visualization" class="title-slide slide level2 center">
+<section id="clustering-t-sne-visualization" class="slide level2">
 <h2>Clustering &amp; t-SNE Visualization</h2>
 <ul>
 <li>Each point = cell</li>
@@ -211,9 +238,16 @@ Thomas Walsh
 <li>Graph-based clustering</li>
 <li>14 clusters identified</li>
 </ul>
-</section>
+<div class="cell">
+<div class="cell-output cell-output-stdout">
+<pre><code>
+  1   2   3   4   5   6   7   8   9  10  11  12  13  14 
+283 451 114 143 599 167 191 128 350  70 199  58  39  24 </code></pre>
+</div>
+</div>
 
-<section id="marker-detection" class="title-slide slide level2 center">
+<img data-src="index_files/figure-revealjs/unnamed-chunk-12-1.png" width="960" class="r-stretch"></section>
+<section id="marker-detection" class="slide level2">
 <h2>Marker Detection</h2>
 <ul>
 <li>Identify cluster-specific genes</li>
@@ -222,22 +256,21 @@ Thomas Walsh
 <p>Top markers for Cluster 1: * Gad1 * Gad2 * Slc32a1</p>
 <p><strong>Indicates interneurons</strong></p>
 </section>
-
-<section id="marker-heatmap" class="title-slide slide level2 center">
+<section id="marker-heatmap" class="slide level2">
 <h2>Marker Heatmap</h2>
 <ul>
 <li>Visualize expression across clusters</li>
 </ul>
-</section>
 
-<section id="logfc-heatmap" class="title-slide slide level2 center">
+<img data-src="index_files/figure-revealjs/unnamed-chunk-14-1.png" width="960" class="r-stretch quarto-figure-center"><p class="caption">Figure 6: Heatmap of the log-expression of the top markers for cluster 1 compared to each other cluster. Cells are ordered by cluster and the color is scaled to the log-expression of each gene in each cell.</p></section>
+<section id="logfc-heatmap" class="slide level2">
 <h2>LogFC Heatmap</h2>
 <ul>
 <li>Compare marker strength across clusters</li>
 </ul>
-</section>
 
-<section id="summary" class="title-slide slide level2 center">
+<img data-src="index_files/figure-revealjs/unnamed-chunk-15-1.png" width="960" class="r-stretch"></section>
+<section id="summary" class="slide level2">
 <h2>Summary</h2>
 <ul>
 <li>Processed scRNA-seq dataset</li>
@@ -246,9 +279,13 @@ Thomas Walsh
 <li>Interneurons identified in Cluster 1</li>
 </ul>
 </section>
-
-<section id="references" class="title-slide slide level2 center">
+<section id="references" class="slide level2">
 <h2>References</h2>
+<ul>
+<li><p>Pollen, A. A., T. J. Nowakowski, J. Shuga, X. Wang, A. A. Leyrat, J. H. Lui, N. Li, et al.&nbsp;2014. “Low-coverage single-cell mRNA sequencing reveals cellular heterogeneity and activated signaling pathways in developing cerebral cortex.” Nat. Biotechnol. 32 (10): 1053–8.</p></li>
+<li><p>Zeisel, A., A. B. Munoz-Manchado, S. Codeluppi, P. Lonnerberg, G. La Manno, A. Jureus, S. Marques, et al.&nbsp;2015. “Brain structure. Cell types in the mouse cortex and hippocampus revealed by single-cell RNA-seq.” Science 347 (6226): 1138–42.</p></li>
+<li><p>Zeng, H., E. H. Shen, J. G. Hohmann, S. W. Oh, A. Bernard, J. J. Royall, K. J. Glattfelder, et al.&nbsp;2012. “Large-scale cellular-resolution gene profiling in human neocortex reveals species-specific molecular signatures.” Cell 149 (2): 483–96.</p></li>
+</ul>
 
 </section>
     </div>
