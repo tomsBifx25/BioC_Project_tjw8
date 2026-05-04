@@ -13,93 +13,110 @@ format:
       eval: true
 ---
 
-## UPDATE notes:
-* label codechunks within the `{r}` curly braces, e.g., `{r PCA_plot}`
-
-
-## Dependencies
-
-```{r Setup} 
+```{r 01_Setup}
 #| include: false
 
-# make sure all required packages are available and load without extra output later on
-library(magrittr)
-library(dplyr)
-library(ggplot2)
-library(pheatmap)
-library(RColorBrewer)
+# Dependencies needed
+# Package lists
+cran_packages <- c(
+  "magrittr",
+  "dplyr",
+  "ggplot2",
+  "pheatmap",
+  "RColorBrewer",
+  "generics",
+  "matrixStats"
+)
 
-# Bioconductur packages
-library(airway)
-library(tximeta)
-library(DESeq2)
-library(PoiClaClu)
-library(glmpca)
-library(ggbeeswarm)
-library(apeglm)
-library(genefilter)
-library(AnnotationDbi)
-library(org.Hs.eg.db)
-library(Gviz)
-library(sva)
-library(RUVSeq)
-library(fission)
+bioc_packages <- c(
+  "BiocSingular",
+  "scran",
+  "org.Mm.eg.db",
+  "AnnotationDbi",
+  "scater",
+  "scuttle",
+  "scRNAseq",
+  "SingleCellExperiment",
+  "SummarizedExperiment",
+  "Biobase",
+  "GenomicRanges",
+  "Seqinfo",
+  "IRanges",
+  "S4Vectors",
+  "BiocGenerics",
+  "MatrixGenerics",
+  "BiocStyle",
+  "rebook"
+)
 
-# my library edits
-## data loading, section DL01
-library(scRNAseq)
-library(scater)
-library(org.Mm.eg.db)
+# Install any missing packages
 
-## QC
+# Install CRAN packages
+cran_to_install <- cran_packages[!cran_packages %in% installed.packages()[, "Package"]]
+if (length(cran_to_install) > 0) {
+  install.packages(cran_to_install, repos = "https://cloud.r-project.org")
+}
 
-## Normalizations
-library(scran)
+# Ensure BiocManager is available
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager", repos = "https://cloud.r-project.org")
+}
 
+# Install Bioconductor packages
+bioc_to_install <- bioc_packages[!bioc_packages %in% installed.packages()[, "Package"]]
+if (length(bioc_to_install) > 0) {
+  BiocManager::install(bioc_to_install, ask = FALSE, update = FALSE)
+}
 
+# Load all packages quietly
+all_packages <- c(cran_packages, bioc_packages)
+
+invisible(
+  lapply(all_packages, function(pkg) {
+    suppressPackageStartupMessages(
+      library(pkg, character.only = TRUE)
+    )
+  })
+)
 ```
 
-## Overview (example)
+## Overview
+This Quarto document reproduces, as an academic exercise, the Bioconductor workflow package [simpleSingleCell](https://www.bioconductor.org/packages/release/workflows/html/simpleSingleCell.html) using a pipeline utilizing a heterogeneous dataset from a study of cell types in the mouse brain [@zeisel_cell_2015]. This pipeline will use a study of cell types in the mouse brain to demonstrates a complete single-cell RNA-seq (scRNA-seq) analysis pipeline using Bioconductor tools to:
+* Process raw single-cell gene expression data
+* Remove low-quality cells
+* Normalize technical variation
+* Identify biologically meaningful variation
+* Cluster cells into distinct populations
+* Detect marker genes to assign cell types
 
-This Quarto document reproduces, as an academic exercise, the Bioconductor workflow package [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) using the recommended alternative pipeline utilizing Salmon for transcript quantification [@love_rna-seq_2016]. The [rnaseqGene](https://www.bioconductor.org/packages/release/workflows/html/rnaseqGene.html) workflow package uses the data in the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package to demonstrate an end-to-end workflow for an RNA sequencing experiment [@himes_rna-seq_2014].
+Ultimatlely, the workflow will be able to identify distinct brain cell populations (e.g., interneurons) from heterogeneous data.
 
-## my overview edit for comparison
-This Quarto document reproduces, as an academic exercise, the Bioconductor workflow package [simpleSingleCell](https://www.bioconductor.org/packages/release/workflows/html/simpleSingleCell.html) using an alternative pipeline utilizing a heterogeneous dataset from a study of cell types in the mouse brain [@zeisel_rna-seq_2015]. The [simpleSingleCell](https://www.bioconductor.org/packages/release/workflows/html/simpleSingleCell.html) workflow package uses the data in the [airway](https://www.bioconductor.org/packages/release/data/experiment/html/airway.html) package to demonstrate an end-to-end workflow for an RNA sequencing experiment [@himes_rna-seq_2014].
-
-
-The recommended alternative pipeline demonstration will use Salmon for transcript quantification of the FASTQ reads. The quantification files produced by Salmon are loaded into the package [tximeta](https://www.bioconductor.org/packages/release/bioc/html/tximeta.html), which will provide genomic annotation and create the Bioconductor friendly data container SummarizedExperiment [@love_tximeta_2020]. The SummarizedExperiment data container are loaded into DESeq2 to create the data object DESeqDataSet, which is used for analysis.
-
-# UPDATE: my edits - base to alter
 ## Introduction
 
-The authors examined a heterogeneous dataset from a study of cell types in the mouse brain (Zeisel et al. 2015). This contains approximately 3000 cells of varying types such as oligodendrocytes, microglia and neurons. Individual cells were isolated using the Fluidigm C1 microfluidics system (Pollen et al. 2014) and library preparation was performed on each cell using a UMI-based protocol. After sequencing, expression was quantified by counting the number of unique molecular identifiers (UMIs) mapped to each gene.
+Here we examine a heterogeneous dataset from a study of cell types in the mouse brain (Zeisel et al. 2015). This contains approximately 3000 cells of varying types such as oligodendrocytes, microglia and neurons. Individual cells were isolated using the Fluidigm C1 microfluidics system (Pollen et al. 2014) and library preparation was performed on each cell using a UMI-based protocol. After sequencing, expression was quantified by counting the number of Unique Molecular Identifiers (UMIs) mapped to each gene.
 
 ## Data Loading
-The Authors obtained a `SingleCellExperiment` object for this dataset using the relevant function from the `scRNAseq` package. The idiosyncrasies of the published dataset means that we need to do some extra work to merge together redundant rows corresponding to alternative genomic locations for the same gene.
+First, obtain a `SingleCellExperiment` object for this dataset using the relevant function from the `scRNAseq` package. The idiosyncrasies of the published dataset means that we need to do some extra work to merge together redundant rows corresponding to alternative genomic locations for the same gene.
 
-```{r DL01}
+```{r 02_DL}
 # Packages/calls
-library(scRNAseq) # (Load up top)
 sce.zeisel <- ZeiselBrainData()
 
-library(scater) # (Load up top)
 sce.zeisel <- aggregateAcrossFeatures(sce.zeisel, 
     id=sub("_loc[0-9]+$", "", rownames(sce.zeisel)))
 
 # Fetch the Ensembl gene IDs, just in case they're needed them later.
-library(org.Mm.eg.db) # (Load up top)
 rowData(sce.zeisel)$Ensembl <- mapIds(org.Mm.eg.db, 
     keys=rownames(sce.zeisel), keytype="SYMBOL", column="ENSEMBL")
 ```
 
 ## Quality Control
-The original authors of the study have already removed low-quality cells prior to data publication. Nonetheless, we compute some quality control metrics to check whether the remaining cells are satisfactory.
+The original dataset had already removed low-quality cells prior to data publication. Nonetheless, compute some quality control metrics to check whether the remaining cells are satisfactory.
 
-```{r QC01}
-# 
+```{r 03_QC}
+# base check
 unfiltered <- sce.zeisel
 
-# 
 stats <- perCellQCMetrics(sce.zeisel, subsets=list(
     Mt=rowData(sce.zeisel)$featureType=="mito"))
 qc <- quickPerCellQC(stats, percent_subsets=c("altexps_ERCC_percent", 
@@ -108,12 +125,12 @@ sce.zeisel <- sce.zeisel[,!qc$discard]
 
 ```
 
-```{r F01}
-# 
+```{r 04_Fig-1}
 colData(unfiltered) <- cbind(colData(unfiltered), stats)
 unfiltered$discard <- qc$discard
 
-# Figure 01
+# qc metric plots
+#| fig-cap: "Figure 1: Distribution of each QC metric across cells in the Zeisel brain dataset. Each point represents a cell and is colored according to whether that cell was discarded."
 gridExtra::grid.arrange(
     plotColData(unfiltered, y="sum", colour_by="discard") +
         scale_y_log10() + ggtitle("Total count"),
@@ -127,10 +144,9 @@ gridExtra::grid.arrange(
 )
 ```
 
-Figure 1: Distribution of each QC metric across cells in the Zeisel brain dataset. Each point represents a cell and is colored according to whether that cell was discarded. 
-
-```{r F02}
-# figure 02
+```{r 05_fig-2}
+# percent mito
+#| fig-cap: "Figure 2: Percentage of mitochondrial reads in each cell in the Zeisel brain dataset, compared to the total count (left) or the percentage of spike-in reads (right). Each point represents a cell and is colored according to whether that cell was discarded."
 gridExtra::grid.arrange(
     plotColData(unfiltered, x="sum", y="subsets_Mt_percent",
         colour_by="discard") + scale_x_log10(),
@@ -140,11 +156,9 @@ gridExtra::grid.arrange(
 )
 ```
 
-Figure 2: Percentage of mitochondrial reads in each cell in the Zeisel brain dataset, compared to the total count (left) or the percentage of spike-in reads (right). Each point represents a cell and is colored according to whether that cell was discarded.
-
 Also examine the number of cells removed for each reason.
 
-```{r QC03}
+```{r 06_QC}
 # gives table
 colSums(as.matrix(qc))
 ```
@@ -152,8 +166,8 @@ colSums(as.matrix(qc))
 
 ## Normalization
 
-```{r N01}
-library(scran) # make sure to add to top
+```{r 06_N01}
+# set seed
 set.seed(1000)
 clusters <- quickCluster(sce.zeisel)
 sce.zeisel <- computeSumFactors(sce.zeisel, cluster=clusters) 
@@ -161,33 +175,33 @@ sce.zeisel <- logNormCounts(sce.zeisel)
 ```
 
 Look into data structure, and summary statistics
-```{r Sum01}
+
+```{r 07_Sum}
 # summary table, min/max etc.
 summary(sizeFactors(sce.zeisel))
 ```
 
-```{r F03}
-# Figure 03, plot for diff in size factors from dataset
+```{r 08_Fig-3}
+# size factors
+#| Fig-cap: "Figure 3: Relationship between the library size factors and the deconvolution size factors in the Zeisel brain dataset."
 plot(librarySizeFactors(sce.zeisel), sizeFactors(sce.zeisel), pch=16,
     xlab="Library size factors", ylab="Deconvolution factors", log="xy")
 ```
-
-Figure 3: Relationship between the library size factors and the deconvolution size factors in the Zeisel brain dataset.
 
 ## Variance Modeling
 
 In theory, we should block on the plate of origin for each cell. However, only 20-40 cells are available on each plate, and the population is also highly heterogeneous. This means that we cannot assume that the distribution of sampled cell types on each plate is the same. Thus, to avoid regressing out potential biology, we will not block on any factors in this analysis.
 
-```{r VM01}
-# 
+```{r 09_VM}
 dec.zeisel <- modelGeneVarWithSpikes(sce.zeisel, "ERCC")
 top.hvgs <- getTopHVGs(dec.zeisel, prop=0.1)
 ```
 
 From Figure 4 below, the technical and total variances are much smaller than those in the read-based datasets. This is due to the use of UMIs, which reduces the noise caused by variable PCR amplification. Furthermore, the spike-in trend is consistently lower than the variances of the endogenous gene, which reflects the heterogeneity in gene expression across cells of different types.
 
-```{r F04}
-# Figure 04
+```{r 10_Fig-4}
+# gene variance
+#| fig-cap: "Figure 4: Per-gene variance as a function of the mean for the log-expression values in the Zeisel brain dataset. Each point represents a gene (black) with the mean-variance trend (blue) fitted to the spike-in transcripts (red)."
 plot(dec.zeisel$mean, dec.zeisel$total, pch=16, cex=0.5,
     xlab="Mean of log-expression", ylab="Variance of log-expression")
 curfit <- metadata(dec.zeisel)
@@ -195,47 +209,43 @@ points(curfit$mean, curfit$var, col="red", pch=16)
 curve(curfit$trend(x), col='dodgerblue', add=TRUE, lwd=2)
 ```
 
-Figure 4: Per-gene variance as a function of the mean for the log-expression values in the Zeisel brain dataset. Each point represents a gene (black) with the mean-variance trend (blue) fitted to the spike-in transcripts (red). 
-
 ## Dimentionality Reduction
 
-```{r DM01}
-# 
-library(BiocSingular) # (Load up top)
+```{r 11_DM}
+# set seed, run PCA and tSNE
 set.seed(101011001)
 sce.zeisel <- denoisePCA(sce.zeisel, technical=dec.zeisel, subset.row=top.hvgs)
 sce.zeisel <- runTSNE(sce.zeisel, dimred="PCA")
 ```
 
-We have a look at the number of PCs retained by denoisePCA().
+We have a look at the number of PCs retained by `denoisePCA()`.
 
-```{r DM02}
-# 
+```{r 12_DM}
 ncol(reducedDim(sce.zeisel, "PCA"))
 ```
 
 ## Clustering
 
-```{r C01}
-# 
+```{r 13_C}
+# cluster and labels
 snn.gr <- buildSNNGraph(sce.zeisel, use.dimred="PCA")
 colLabels(sce.zeisel) <- factor(igraph::cluster_walktrap(snn.gr)$membership)
 
 # table for the cluster labels
 table(colLabels(sce.zeisel))
-
-# t-SNE plot for labeled clusters
-plotTSNE(sce.zeisel, colour_by="label")
-
 ```
 
-Figure 5: Obligatory t-SNE plot of the Zeisel brain dataset, where each point represents a cell and is colored according to the assigned cluster. 
+```{r 14_fig-5}
+# t-SNE plot for labeled clusters
+#| fig-cap: "Figure 5: Obligatory t-SNE plot of the Zeisel brain dataset, where each point represents a cell and is colored according to the assigned cluster."
+plotTSNE(sce.zeisel, colour_by="label")
+```
 
 ## Intertrepation
 
 The focus on upregulated marker genes as these can quickly provide positive identification of cell type in a heterogeneous population. We examine the table for cluster 1, in which log-fold changes are reported between cluster 1 and every other cluster. The same output is provided for each cluster in order to identify genes that discriminate between clusters.
 
-```{r I01}
+```{r 15_I}
 # gives table for the top diff expr genes as markers
 markers <- findMarkers(sce.zeisel, direction="up")
 marker.set <- markers[["1"]]
@@ -244,110 +254,29 @@ head(marker.set[,1:8], 10) # only first 8 columns, for brevity
 
 Below, Figure 6 indicates that most of the top markers are strongly DE in cells of cluster 1 compared to some or all of the other clusters. We can use these markers to identify cells from cluster 1 in validation studies with an independent population of cells. A quick look at the markers suggest that cluster 1 represents interneurons based on expression of Gad1 and Slc6a1 (Zeng et al. 2012).
 
-```{r I02}
+```{r 16_fig-6}
 # heatmap
+#| fig-cap: "Figure 6: Heatmap of the log-expression of the top markers for cluster 1 compared to each other cluster. Cells are ordered by cluster and the color is scaled to the log-expression of each gene in each cell."
 top.markers <- rownames(marker.set)[marker.set$Top <= 10]
 plotHeatmap(sce.zeisel, features=top.markers, order_columns_by="label")
 ```
 
-Figure 6: Heatmap of the log-expression of the top markers for cluster 1 compared to each other cluster. Cells are ordered by cluster and the color is scaled to the log-expression of each gene in each cell.
-
 An alternative visualization approach is to plot the log-fold changes to all other clusters directly (Figure 7). This is more concise and is useful in situations involving many clusters that contain different numbers of cells.
 
-```{r I03}
-# heatmap, alt of first
-library(pheatmap) # (Load up top)
+```{r 17_fig-7}
+# heatmap, alt - to see log-fold changes
+#| fig-cap: "Figure 7: Heatmap of the log-fold changes of the top markers for cluster 1 compared to each other cluster."
 logFCs <- getMarkerEffects(marker.set[1:50,])
 pheatmap(logFCs, breaks=seq(-5, 5, length.out=101))
 ```
 
-{cap} Figure 7: Heatmap of the log-fold changes of the top markers for cluster 1 compared to each other cluster. 
-
 ## Session Information:
 
-The environment the authors used in this workflow, versions, packages used, libraries, etc.
+```{r}
+sessionInfo()
+```
 
-R version 4.6.0 RC (2026-04-17 r89917)
-Platform: x86_64-pc-linux-gnu
-Running under: Ubuntu 24.04.4 LTS
-
-Matrix products: default
-BLAS:   /home/biocbuild/bbs-3.23-bioc/R/lib/libRblas.so 
-LAPACK: /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.12.0  LAPACK version 3.12.0
-
-locale:
- [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
- [3] LC_TIME=en_GB              LC_COLLATE=C              
- [5] LC_MONETARY=en_US.UTF-8    LC_MESSAGES=en_US.UTF-8   
- [7] LC_PAPER=en_US.UTF-8       LC_NAME=C                 
- [9] LC_ADDRESS=C               LC_TELEPHONE=C            
-[11] LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C       
-
-time zone: America/New_York
-tzcode source: system (glibc)
-
-attached base packages:
-[1] stats4    stats     graphics  grDevices utils     datasets  methods  
-[8] base     
-
-other attached packages:
- [1] pheatmap_1.0.13             BiocSingular_1.28.0        
- [3] scran_1.40.0                org.Mm.eg.db_3.23.0        
- [5] AnnotationDbi_1.74.0        scater_1.40.0              
- [7] ggplot2_4.0.3               scuttle_1.22.0             
- [9] scRNAseq_2.25.0             SingleCellExperiment_1.34.0
-[11] SummarizedExperiment_1.42.0 Biobase_2.72.0             
-[13] GenomicRanges_1.64.0        Seqinfo_1.2.0              
-[15] IRanges_2.46.0              S4Vectors_0.50.0           
-[17] BiocGenerics_0.58.0         generics_0.1.4             
-[19] MatrixGenerics_1.24.0       matrixStats_1.5.0          
-[21] BiocStyle_2.40.0            rebook_1.22.0              
-
-loaded via a namespace (and not attached):
-  [1] RColorBrewer_1.1-3       jsonlite_2.0.0           CodeDepends_0.6.7       
-  [4] magrittr_2.0.5           ggbeeswarm_0.7.3         GenomicFeatures_1.64.0  
-  [7] gypsum_1.8.0             farver_2.1.2             rmarkdown_2.31          
- [10] BiocIO_1.22.0            vctrs_0.7.3              memoise_2.0.1           
- [13] Rsamtools_2.28.0         RCurl_1.98-1.18          htmltools_0.5.9         
- [16] S4Arrays_1.12.0          AnnotationHub_4.2.0      curl_7.1.0              
- [19] BiocNeighbors_2.6.0      Rhdf5lib_2.0.0           SparseArray_1.12.0      
- [22] rhdf5_2.56.0             sass_0.4.10              alabaster.base_1.12.0   
- [25] bslib_0.10.0             alabaster.sce_1.12.0     httr2_1.2.2             
- [28] cachem_1.1.0             GenomicAlignments_1.48.0 igraph_2.3.0            
- [31] lifecycle_1.0.5          pkgconfig_2.0.3          rsvd_1.0.5              
- [34] Matrix_1.7-5             R6_2.6.1                 fastmap_1.2.0           
- [37] digest_0.6.39            dqrng_0.4.1              irlba_2.3.7             
- [40] ExperimentHub_3.2.0      RSQLite_2.4.6            beachmat_2.28.0         
- [43] labeling_0.4.3           filelock_1.0.3           httr_1.4.8              
- [46] abind_1.4-8              compiler_4.6.0           bit64_4.8.0             
- [49] withr_3.0.2              S7_0.2.2                 BiocParallel_1.46.0     
- [52] viridis_0.6.5            DBI_1.3.0                HDF5Array_1.40.0        
- [55] alabaster.ranges_1.12.0  alabaster.schemas_1.12.0 rappdirs_0.3.4          
- [58] DelayedArray_0.38.0      bluster_1.22.0           rjson_0.2.23            
- [61] tools_4.6.0              vipor_0.4.7              otel_0.2.0              
- [64] beeswarm_0.4.0           glue_1.8.1               h5mread_1.4.0           
- [67] restfulr_0.0.16          rhdf5filters_1.24.0      grid_4.6.0              
- [70] Rtsne_0.17               cluster_2.1.8.2          gtable_0.3.6            
- [73] ensembldb_2.36.0         metapod_1.20.0           ScaledMatrix_1.20.0     
- [76] XVector_0.52.0           ggrepel_0.9.8            BiocVersion_3.23.1      
- [79] pillar_1.11.1            limma_3.68.0             dplyr_1.2.1             
- [82] BiocFileCache_3.2.0      lattice_0.22-9           rtracklayer_1.72.0      
- [85] bit_4.6.0                tidyselect_1.2.1         locfit_1.5-9.12         
- [88] Biostrings_2.80.0        knitr_1.51               gridExtra_2.3           
- [91] bookdown_0.46            ProtGenerics_1.44.0      edgeR_4.10.0            
- [94] xfun_0.57                statmod_1.5.1            UCSC.utils_1.8.0        
- [97] lazyeval_0.2.3           yaml_2.3.12              evaluate_1.0.5          
-[100] codetools_0.2-20         cigarillo_1.2.0          tibble_3.3.1            
-[103] alabaster.matrix_1.12.0  BiocManager_1.30.27      graph_1.90.0            
-[106] cli_3.6.6                jquerylib_0.1.4          dichromat_2.0-0.1       
-[109] Rcpp_1.1.1-1.1           GenomeInfoDb_1.48.0      dir.expiry_1.20.0       
-[112] dbplyr_2.5.2             png_0.1-9                XML_3.99-0.23           
-[115] parallel_4.6.0           blob_1.3.0               AnnotationFilter_1.36.0 
-[118] bitops_1.0-9             viridisLite_0.4.3        alabaster.se_1.12.0     
-[121] scales_1.4.0             crayon_1.5.3             rlang_1.2.0             
-[124] cowplot_1.2.0            KEGGREST_1.52.0
-
-## References (authors)
+## References (BioC page)
 
 Pollen, A. A., T. J. Nowakowski, J. Shuga, X. Wang, A. A. Leyrat, J. H. Lui, N. Li, et al. 2014. “Low-coverage single-cell mRNA sequencing reveals cellular heterogeneity and activated signaling pathways in developing cerebral cortex.” Nat. Biotechnol. 32 (10): 1053–8.
 
@@ -356,40 +285,44 @@ Zeisel, A., A. B. Munoz-Manchado, S. Codeluppi, P. Lonnerberg, G. La Manno, A. J
 Zeng, H., E. H. Shen, J. G. Hohmann, S. W. Oh, A. Bernard, J. J. Royall, K. J. Glattfelder, et al. 2012. “Large-scale cellular-resolution gene profiling in human neocortex reveals species-specific molecular signatures.” Cell 149 (2): 483–96.
 
 
-## Session information (example)
-
-```{r}
-sessionInfo()
-```
-
-### References (example)
+### References
 
 ```{r}
 #| echo: false
 #| eval: false
 
-# reference information for the bibliography was obtained using `citation()` as follows:
+# Reference information for the bibliography obtained using citation() 
 
-citation("airway")
-citation("tximeta")
-citation("tximport")
-#citation("rnaseqGene")
-citation("pheatmap")
-citation("magrittr")
-citation("apeglm")
-citation("vsn")
-citation("dplyr") 
-citation("ggplot2") 
-citation("hexbin")
-citation("pheatmap")
-citation("RColorBrewer")
-citation("PoiClaClu") 
-citation("glmpca")
-citation("ggbeeswarm")
-citation("genefilter")
+# core Analysis & Infrastructure
+citation("SingleCellExperiment")
+citation("SummarizedExperiment")
+citation("GenomicRanges")
+citation("IRanges")
+citation("S4Vectors")
+citation("BiocGenerics")
+
+# Single-Cell Specific Tools
+citation("scran")
+citation("scater")
+citation("scuttle")
+citation("scRNAseq")
+citation("BiocSingular")
+
+# Annotation & Data
+citation("org.Mm.eg.db")
 citation("AnnotationDbi")
-citation("Gviz")
-citation("sva")
-citation("RUVSeq")
-citation("fission")
+citation("Biobase")
+citation("Seqinfo")
+
+# Utility & Visualization
+citation("rebook")
+citation("BiocStyle")
+citation("MatrixGenerics")
+citation("matrixStats")
+citation("generics")
+citation("RColorBrewer")
+citation("pheatmap")
+citation("ggplot2")
+citation("dplyr")
+citation("magrittr")
 ```
